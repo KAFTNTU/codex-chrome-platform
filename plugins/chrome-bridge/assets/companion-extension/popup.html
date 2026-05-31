@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <title>Chrome Bridge</title>
+  <style>
+    body { font-family: Segoe UI, sans-serif; margin: 12px; width: 320px; }
+    .row { margin: 8px 0; }
+    .status { font-weight: 700; }
+    input { width: 100%; box-sizing: border-box; padding: 8px; }
+    button { margin-top: 8px; padding: 8px 10px; }
+    code { font-size: 11px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <div class="row"><strong>Chrome Bridge Companion</strong></div>
+  <div class="row">Статус: <span id="status" class="status">...</span></div>
+  <div class="row">Server URL</div>
+  <div class="row"><input id="serverUrl" /></div>
+  <div class="row"><button id="save">Зберегти</button></div>
+  <div class="row">Client ID</div>
+  <div class="row"><code id="clientId"></code></div>
+  <div class="row">Помилка</div>
+  <div class="row"><code id="error"></code></div>
+  <script src="popup.js"></script>
+</body>
+</html>
