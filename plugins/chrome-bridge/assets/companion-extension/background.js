@@ -2,6 +2,7 @@ const DEFAULT_SERVER = 'http://127.0.0.1:17373';
 const HIGHLIGHT_ID = '__codex_chrome_bridge_highlight__';
 const MAX_COMMAND_LOG = 60;
 const MAX_NETWORK_LOG = 120;
+const MAX_SESSION_MEMORY = 80;
 
 let state = { connected: false, clientId: null, lastError: null, serverUrl: DEFAULT_SERVER };
 let commandLog = [];
@@ -9,6 +10,9 @@ let networkState = {
   attachedTabId: null,
   logsByTab: {},
   requestsByTab: {},
+};
+let sessionMemory = {
+  byTab: {},
 };
 
 async function loadState() {
@@ -31,6 +35,41 @@ function pushCommandLog(entry) {
     at: new Date().toISOString(),
     ...entry,
   }, ...commandLog].slice(0, MAX_COMMAND_LOG);
+}
+
+function recordSessionEvent(tabId, action, details = {}) {
+  if (tabId == null) return;
+  const key = String(tabId);
+  sessionMemory.byTab[key] ||= [];
+  sessionMemory.byTab[key] = [{
+    at: new Date().toISOString(),
+    action,
+    ...details,
+  }, ...sessionMemory.byTab[key]].slice(0, MAX_SESSION_MEMORY);
+}
+
+function getSessionMemory(tabId = null) {
+  if (tabId != null) {
+    return {
+      tabId: Number(tabId),
+      events: sessionMemory.byTab[String(tabId)] || [],
+    };
+  }
+  return {
+    tabs: Object.entries(sessionMemory.byTab).map(([key, events]) => ({
+      tabId: Number(key),
+      events,
+    })),
+  };
+}
+
+function clearSessionMemory(tabId = null) {
+  if (tabId != null) {
+    delete sessionMemory.byTab[String(tabId)];
+    return { cleared: true, tabId: Number(tabId) };
+  }
+  sessionMemory.byTab = {};
+  return { cleared: true, allTabs: true };
 }
 
 function debuggerTarget(tabId) {
@@ -174,6 +213,18 @@ async function executeInTab(func, args = [], tabId = null) {
   return result;
 }
 
+async function runAndRemember(action, func, args = [], tabId = null, detailBuilder = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const result = await executeInTab(func, args, resolvedTabId);
+  try {
+    const details = typeof detailBuilder === 'function' ? (detailBuilder(result) || {}) : {};
+    recordSessionEvent(resolvedTabId, action, details);
+  } catch {
+    // Ignore memory builder failures.
+  }
+  return result;
+}
+
 async function listTabs(currentWindowOnly = false) {
   const tabs = await queryTabs(currentWindowOnly ? { currentWindow: true } : {});
   return tabs.map(serializeTab);
@@ -312,6 +363,53 @@ async function handleCommand(command) {
         window.scrollBy(deltaX, deltaY);
         return { scrollX: window.scrollX, scrollY: window.scrollY };
       }, [params.deltaX || 0, params.deltaY || 0], params.tabId ?? null);
+    case 'smoothScroll':
+      return await runAndRemember('smoothScroll', async (totalY, stepY, delayMs) => {
+        const target = Number(totalY || 0);
+        const step = Math.max(20, Math.abs(stepY || 140));
+        const direction = target >= 0 ? 1 : -1;
+        let moved = 0;
+        while (Math.abs(moved) < Math.abs(target)) {
+          const remaining = Math.abs(target) - Math.abs(moved);
+          const chunk = Math.min(step, remaining) * direction;
+          window.scrollBy(0, chunk);
+          moved += chunk;
+          await new Promise((resolve) => setTimeout(resolve, Math.max(10, delayMs || 35)));
+        }
+        return { ok: true, movedY: moved, scrollX: window.scrollX, scrollY: window.scrollY };
+      }, [params.totalY || 0, params.stepY || 140, params.delayMs || 35], params.tabId ?? null, (result) => ({
+        movedY: result?.movedY || 0,
+      }));
+    case 'infiniteScroll':
+      return await runAndRemember('infiniteScroll', async (maxPasses, stepY, delayMs, stablePasses) => {
+        const passes = Math.max(1, maxPasses || 8);
+        let stable = 0;
+        let lastHeight = document.body?.scrollHeight || 0;
+        const snapshots = [];
+        for (let i = 0; i < passes; i += 1) {
+          window.scrollBy(0, stepY || window.innerHeight);
+          await new Promise((resolve) => setTimeout(resolve, Math.max(80, delayMs || 350)));
+          const height = document.body?.scrollHeight || 0;
+          const itemCount = document.querySelectorAll('a, article, li, .card, .item, [data-testid]').length;
+          snapshots.push({ pass: i + 1, scrollHeight: height, itemCount });
+          if (height === lastHeight) {
+            stable += 1;
+          } else {
+            stable = 0;
+            lastHeight = height;
+          }
+          if (stable >= Math.max(1, stablePasses || 2)) break;
+        }
+        return {
+          ok: true,
+          passesRun: snapshots.length,
+          snapshots,
+          finalScrollHeight: lastHeight,
+          finalY: window.scrollY,
+        };
+      }, [params.maxPasses || 8, params.stepY || 0, params.delayMs || 350, params.stablePasses || 2], params.tabId ?? null, (result) => ({
+        passesRun: result?.passesRun || 0,
+      }));
     case 'scrollToSelector':
       return await executeInTab((selector) => {
         const el = document.querySelector(selector);
@@ -400,7 +498,7 @@ async function handleCommand(command) {
         return { title: document.title, url: location.href, needle: target, exact, matches };
       }, [params.text || '', !!params.exact, params.maxItems || 25], params.tabId ?? null);
     case 'clickByText':
-      return await executeInTab((needle, exact, selector) => {
+      return await runAndRemember('clickByText', (needle, exact, selector) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
         const target = norm(needle);
         if (!target) throw new Error('text is required');
@@ -429,7 +527,54 @@ async function handleCommand(command) {
           tag: candidate.tagName.toLowerCase(),
           matchedText: norm(candidate.innerText || candidate.textContent || candidate.value || '').slice(0, 200),
         };
-      }, [params.text || '', !!params.exact, params.selector || null], params.tabId ?? null);
+      }, [params.text || '', !!params.exact, params.selector || null], params.tabId ?? null, (result) => ({
+        text: result?.matchedText || params.text || '',
+      }));
+    case 'clickNearestMatch':
+      return await runAndRemember('clickNearestMatch', (needle, selector, maxItems) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const target = norm(needle).toLowerCase();
+        if (!target) throw new Error('text is required');
+        const isVisible = (el) => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' &&
+            style.display !== 'none' &&
+            rect.width > 0 &&
+            rect.height > 0;
+        };
+        const scoreText = (text) => {
+          const candidate = norm(text).toLowerCase();
+          if (!candidate) return -1;
+          if (candidate === target) return 1000;
+          if (candidate.startsWith(target)) return 800 - Math.max(0, candidate.length - target.length);
+          if (candidate.includes(target)) return 600 - Math.abs(candidate.length - target.length);
+          const overlap = target.split(' ').filter((part) => part && candidate.includes(part)).length;
+          return overlap > 0 ? 200 + overlap : -1;
+        };
+        const elements = Array.from(document.querySelectorAll(selector || 'a, button, input, select, textarea, label, summary, [role="button"], [onclick], [contenteditable="true"]'))
+          .filter(isVisible)
+          .map((el) => {
+            const text = norm(el.innerText || el.textContent || el.value || '');
+            return { el, text, score: scoreText(text) };
+          })
+          .filter((item) => item.score >= 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, Math.max(1, maxItems || 5));
+        const best = elements[0];
+        if (!best) throw new Error(`No visible element found for text: ${needle}`);
+        best.el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        best.el.click();
+        return {
+          clicked: true,
+          matchedText: best.text,
+          score: best.score,
+          alternatives: elements.slice(1).map((item) => ({ text: item.text.slice(0, 120), score: item.score })),
+        };
+      }, [params.text || '', params.selector || null, params.maxItems || 5], params.tabId ?? null, (result) => ({
+        text: result?.matchedText || params.text || '',
+        score: result?.score || null,
+      }));
     case 'listFrames':
       return await executeInTab(() => {
         const frames = Array.from(document.querySelectorAll('iframe, frame')).map((frame, index) => ({
@@ -528,14 +673,126 @@ async function handleCommand(command) {
         return { title: document.title, url: location.href, kind, items };
       }, [params.kind || 'all', params.maxItems || 200], params.tabId ?? null);
     case 'click':
-      return await executeInTab((selector) => {
+      return await runAndRemember('click', (selector) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
         el.click();
         return { clicked: true, selector };
-      }, [params.selector], params.tabId ?? null);
+      }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
+    case 'moveCursor':
+      return await runAndRemember('moveCursor', (selector, steps, durationMs) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        const rect = el.getBoundingClientRect();
+        const cursorId = '__codex_bridge_cursor__';
+        let cursor = document.getElementById(cursorId);
+        if (!cursor) {
+          cursor = document.createElement('div');
+          cursor.id = cursorId;
+          cursor.style.position = 'fixed';
+          cursor.style.width = '12px';
+          cursor.style.height = '12px';
+          cursor.style.borderRadius = '999px';
+          cursor.style.background = '#ff5a36';
+          cursor.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.85), 0 0 18px rgba(255,90,54,0.45)';
+          cursor.style.zIndex = '2147483647';
+          cursor.style.pointerEvents = 'none';
+          document.body.appendChild(cursor);
+        }
+        const startX = 18;
+        const startY = 18;
+        const endX = rect.left + rect.width / 2;
+        const endY = rect.top + rect.height / 2;
+        const frames = Math.max(3, steps || 12);
+        for (let i = 0; i <= frames; i += 1) {
+          const t = i / frames;
+          const eased = 1 - Math.pow(1 - t, 3);
+          const x = startX + (endX - startX) * eased;
+          const y = startY + (endY - startY) * eased + Math.sin(t * Math.PI) * 12;
+          cursor.style.transform = `translate(${x}px, ${y}px)`;
+        }
+        el.dispatchEvent(new MouseEvent('mousemove', {
+          bubbles: true,
+          clientX: endX,
+          clientY: endY,
+          view: window,
+        }));
+        return { moved: true, selector, durationMs: durationMs || 400, steps: frames };
+      }, [params.selector, params.steps || 12, params.durationMs || 400], params.tabId ?? null, () => ({
+        selector: params.selector,
+      }));
+    case 'humanClick':
+      return await runAndRemember('humanClick', (selector, steps, button) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        const rect = el.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const cursorId = '__codex_bridge_cursor__';
+        let cursor = document.getElementById(cursorId);
+        if (!cursor) {
+          cursor = document.createElement('div');
+          cursor.id = cursorId;
+          cursor.style.position = 'fixed';
+          cursor.style.width = '12px';
+          cursor.style.height = '12px';
+          cursor.style.borderRadius = '999px';
+          cursor.style.background = '#ff5a36';
+          cursor.style.boxShadow = '0 0 0 2px rgba(255,255,255,0.85), 0 0 18px rgba(255,90,54,0.45)';
+          cursor.style.zIndex = '2147483647';
+          cursor.style.pointerEvents = 'none';
+          document.body.appendChild(cursor);
+        }
+        cursor.style.transform = `translate(${x}px, ${y}px)`;
+        const eventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: button || 0, buttons: 1, view: window };
+        el.dispatchEvent(new MouseEvent('pointerdown', eventInit));
+        el.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        el.dispatchEvent(new MouseEvent('pointerup', eventInit));
+        el.dispatchEvent(new MouseEvent('mouseup', eventInit));
+        el.dispatchEvent(new MouseEvent('click', eventInit));
+        return { clicked: true, selector, steps: Math.max(3, steps || 12) };
+      }, [params.selector, params.steps || 12, params.button || 0], params.tabId ?? null, () => ({
+        selector: params.selector,
+      }));
+    case 'doubleClick':
+      return await runAndRemember('doubleClick', (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        const rect = el.getBoundingClientRect();
+        const eventInit = {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          detail: 2,
+          view: window,
+        };
+        el.dispatchEvent(new MouseEvent('dblclick', eventInit));
+        if (typeof el.click === 'function') {
+          el.click();
+          el.click();
+        }
+        return { doubleClicked: true, selector };
+      }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
+    case 'rightClick':
+      return await runAndRemember('rightClick', (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        const rect = el.getBoundingClientRect();
+        const eventInit = {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          button: 2,
+          buttons: 2,
+          view: window,
+        };
+        el.dispatchEvent(new MouseEvent('contextmenu', eventInit));
+        return { rightClicked: true, selector };
+      }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
     case 'hover':
-      return await executeInTab((selector) => {
+      return await runAndRemember('hover', (selector) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
         const rect = el.getBoundingClientRect();
@@ -550,9 +807,59 @@ async function handleCommand(command) {
         el.dispatchEvent(new MouseEvent('mouseover', eventInit));
         el.dispatchEvent(new MouseEvent('mouseenter', eventInit));
         return { hovered: true, selector, tag: el.tagName.toLowerCase() };
-      }, [params.selector], params.tabId ?? null);
+      }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
+    case 'hoverInspect':
+      return await runAndRemember('hoverInspect', async (selector, waitMs) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        const rect = el.getBoundingClientRect();
+        const eventInit = {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          view: window,
+        };
+        el.dispatchEvent(new MouseEvent('pointerover', eventInit));
+        el.dispatchEvent(new MouseEvent('mouseover', eventInit));
+        el.dispatchEvent(new MouseEvent('mouseenter', eventInit));
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const isVisible = (node) => {
+          const style = window.getComputedStyle(node);
+          const bounds = node.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && bounds.width > 0 && bounds.height > 0;
+        };
+        const surfaced = Array.from(document.querySelectorAll('[role="dialog"], [role="menu"], [role="listbox"], [role="tooltip"], dialog, .dropdown-menu, .menu, .popover, .tooltip'))
+          .filter(isVisible)
+          .slice(0, 12)
+          .map((node) => ({
+            tag: node.tagName.toLowerCase(),
+            role: node.getAttribute('role'),
+            text: norm(node.innerText || node.textContent || '').slice(0, 220),
+          }));
+        return { hovered: true, selector, surfaced };
+      }, [params.selector, params.waitMs || 300], params.tabId ?? null, () => ({ selector: params.selector }));
+    case 'dragAndDrop':
+      return await runAndRemember('dragAndDrop', (sourceSelector, targetSelector) => {
+        const source = document.querySelector(sourceSelector);
+        const target = document.querySelector(targetSelector);
+        if (!source) throw new Error(`Source not found: ${sourceSelector}`);
+        if (!target) throw new Error(`Target not found: ${targetSelector}`);
+        const dataTransfer = new DataTransfer();
+        const fire = (node, type) => node.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+        fire(source, 'dragstart');
+        fire(target, 'dragenter');
+        fire(target, 'dragover');
+        fire(target, 'drop');
+        fire(source, 'dragend');
+        return { moved: true, sourceSelector, targetSelector };
+      }, [params.sourceSelector, params.targetSelector], params.tabId ?? null, () => ({
+        sourceSelector: params.sourceSelector,
+        targetSelector: params.targetSelector,
+      }));
     case 'type':
-      return await executeInTab((selector, text) => {
+      return await runAndRemember('type', (selector, text) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
         el.focus();
@@ -566,7 +873,89 @@ async function handleCommand(command) {
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         return { typed: true, selector, textLength: text.length };
-      }, [params.selector, params.text], params.tabId ?? null);
+      }, [params.selector, params.text], params.tabId ?? null, () => ({
+        selector: params.selector,
+        textLength: String(params.text || '').length,
+      }));
+    case 'pasteText':
+      return await runAndRemember('pasteText', (selector, text) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        el.focus();
+        const normalized = String(text ?? '');
+        const clipboardData = new DataTransfer();
+        clipboardData.setData('text/plain', normalized);
+        const pasteEvent = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData,
+        });
+        el.dispatchEvent(pasteEvent);
+        if ('value' in el) {
+          const start = el.selectionStart ?? el.value.length;
+          const end = el.selectionEnd ?? start;
+          const before = el.value.slice(0, start);
+          const after = el.value.slice(end);
+          el.value = `${before}${normalized}${after}`;
+        } else if (el.isContentEditable) {
+          document.execCommand('insertText', false, normalized);
+          if (!el.textContent?.includes(normalized)) {
+            el.textContent = `${el.textContent || ''}${normalized}`;
+          }
+        }
+        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: normalized, inputType: 'insertFromPaste' }));
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: normalized, inputType: 'insertFromPaste' }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return { pasted: true, selector, textLength: normalized.length };
+      }, [params.selector, params.text || ''], params.tabId ?? null, () => ({
+        selector: params.selector,
+        textLength: String(params.text || '').length,
+      }));
+    case 'typeIntoEditor':
+      return await runAndRemember('typeIntoEditor', (selector, text, append) => {
+        const el = selector ? document.querySelector(selector) : (document.activeElement || null);
+        if (!el) throw new Error('Editor target not found');
+        const normalized = String(text ?? '');
+        const applyToMonaco = () => {
+          const maybeEditor = el.closest('.monaco-editor');
+          if (!maybeEditor) return false;
+          const textarea = maybeEditor.querySelector('textarea');
+          if (!textarea) return false;
+          textarea.focus();
+          textarea.value = append ? `${textarea.value || ''}${normalized}` : normalized;
+          textarea.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        };
+        const applyToCodeMirror = () => {
+          const maybeEditor = el.closest('.CodeMirror, .cm-editor');
+          if (!maybeEditor) return false;
+          const content = maybeEditor.querySelector('[contenteditable=\"true\"], textarea');
+          if (!content) return false;
+          content.focus();
+          if ('value' in content) {
+            content.value = append ? `${content.value || ''}${normalized}` : normalized;
+          } else {
+            content.textContent = append ? `${content.textContent || ''}${normalized}` : normalized;
+          }
+          content.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        };
+        if (!applyToMonaco() && !applyToCodeMirror()) {
+          el.focus();
+          if ('value' in el) {
+            el.value = append ? `${el.value || ''}${normalized}` : normalized;
+          } else if (el.isContentEditable) {
+            el.textContent = append ? `${el.textContent || ''}${normalized}` : normalized;
+          } else {
+            throw new Error('Element is not editor-compatible');
+          }
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return { typed: true, selector: selector || null, textLength: normalized.length, append: !!append };
+      }, [params.selector || null, params.text || '', !!params.append], params.tabId ?? null, () => ({
+        selector: params.selector || null,
+        textLength: String(params.text || '').length,
+      }));
     case 'pressKey':
       return await executeInTab((key, ctrlKey, altKey, shiftKey, metaKey) => {
         const target = document.activeElement || document.body || document.documentElement;
@@ -601,6 +990,25 @@ async function handleCommand(command) {
         }
         throw new Error(`Timed out waiting for selector: ${selector}`);
       }, [params.selector, params.timeoutMs || 10000], params.tabId ?? null);
+    case 'waitForText':
+      return await executeInTab(async (needle, timeoutMs, exact, selector) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const target = norm(needle);
+        const startedAt = Date.now();
+        while (Date.now() - startedAt < timeoutMs) {
+          const roots = selector ? Array.from(document.querySelectorAll(selector)) : [document.body];
+          for (const root of roots) {
+            const text = norm(root?.innerText || root?.textContent || '');
+            if (!text) continue;
+            const ok = exact ? text === target : text.toLowerCase().includes(target.toLowerCase());
+            if (ok) {
+              return { found: true, text: target, elapsedMs: Date.now() - startedAt };
+            }
+          }
+          await new Promise((resolve) => setTimeout(resolve, 150));
+        }
+        throw new Error(`Timed out waiting for text: ${target}`);
+      }, [params.text || '', params.timeoutMs || 10000, !!params.exact, params.selector || null], params.tabId ?? null);
     case 'selectOption':
       return await executeInTab((selector, value, label, index) => {
         const el = document.querySelector(selector);
@@ -718,6 +1126,23 @@ async function handleCommand(command) {
         const text = selection.toString();
         return { selected: true, textLength: text.length, text: text.slice(0, 500) };
       }, [params.selector || null, params.text || null], params.tabId ?? null);
+    case 'selectTextByDrag':
+      return await runAndRemember('selectTextByDrag', (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        selection.addRange(range);
+        const rect = el.getBoundingClientRect();
+        const start = { x: rect.left + 4, y: rect.top + 4 };
+        const end = { x: rect.right - 4, y: rect.bottom - 4 };
+        el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: start.x, clientY: start.y, view: window }));
+        el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: end.x, clientY: end.y, view: window }));
+        el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: end.x, clientY: end.y, view: window }));
+        return { selected: true, selector, text: selection.toString().slice(0, 500), textLength: selection.toString().length };
+      }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
     case 'copySelectedText': {
       const selected = await executeInTab(() => {
         const text = window.getSelection ? window.getSelection().toString() : '';
@@ -800,6 +1225,58 @@ async function handleCommand(command) {
           landmarks,
         };
       }, [], params.tabId ?? null);
+    case 'smartFocus':
+      return await runAndRemember('smartFocus', (mode, textNeedle) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const isVisible = (el) => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const controls = Array.from(document.querySelectorAll('input, textarea, select, button, [contenteditable="true"], [role="button"]'))
+          .filter(isVisible);
+        let target = null;
+        if (textNeedle) {
+          const needle = norm(textNeedle).toLowerCase();
+          target = controls.find((el) => {
+            const text = norm(el.innerText || el.textContent || el.getAttribute('placeholder') || el.getAttribute('aria-label') || '').toLowerCase();
+            return text.includes(needle);
+          }) || null;
+        }
+        if (!target) {
+          if (mode === 'button') {
+            target = controls.find((el) => el.tagName === 'BUTTON' || el.getAttribute('role') === 'button') || null;
+          } else {
+            target = controls.find((el) => ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) || el.isContentEditable) || null;
+          }
+        }
+        if (!target) throw new Error('No focusable target found');
+        target.focus();
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        return {
+          focused: true,
+          tag: target.tagName.toLowerCase(),
+          type: target.getAttribute('type'),
+          placeholder: target.getAttribute('placeholder'),
+          ariaLabel: target.getAttribute('aria-label'),
+        };
+      }, [params.mode || 'input', params.text || null], params.tabId ?? null, (result) => ({
+        tag: result?.tag || null,
+      }));
+    case 'openFilePicker':
+      return await runAndRemember('openFilePicker', (selector) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        if (!(el instanceof HTMLInputElement) || el.type !== 'file') {
+          throw new Error('Target is not an input[type="file"]');
+        }
+        el.click();
+        return { opened: true, selector, awaitsUserSelection: true };
+      }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
+    case 'getSessionMemory':
+      return getSessionMemory(params.tabId ?? null);
+    case 'clearSessionMemory':
+      return clearSessionMemory(params.tabId ?? null);
     case 'getCookies': {
       const url = params.url || await getPageUrl(params.tabId ?? null);
       const cookies = await chrome.cookies.getAll({ url });

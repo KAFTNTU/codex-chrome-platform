@@ -16,27 +16,44 @@ TOOLS = [
     {"name":"chrome_bridge_extract_visible_dom","description":"Extract a compact list of visible interactive DOM elements from the active tab.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer","description":"Maximum number of visible elements to return."}},"additionalProperties":False}},
     {"name":"chrome_bridge_find_by_text","description":"Find visible page elements by text content.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"}},"required":["text"],"additionalProperties":False}},
     {"name":"chrome_bridge_click_by_text","description":"Click the first visible interactive element whose text matches the provided text.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"exact":{"type":"boolean"},"selector":{"type":"string"}},"required":["text"],"additionalProperties":False}},
+    {"name":"chrome_bridge_click_nearest_match","description":"Click the closest visible text match among likely interactive elements.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"selector":{"type":"string"},"maxItems":{"type":"integer"}},"required":["text"],"additionalProperties":False}},
     {"name":"chrome_bridge_list_frames","description":"List iframe/frame elements on the page.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_get_forms","description":"Inspect forms and fields on the page.","inputSchema":{"type":"object","properties":{"maxForms":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_fill_fields","description":"Fill multiple fields by selector in one call.","inputSchema":{"type":"object","properties":{"entries":{"type":"array","items":{"type":"object","properties":{"selector":{"type":"string"},"value":{"type":"string"},"checked":{"type":"boolean"},"selectValue":{"type":"string"}},"required":["selector"],"additionalProperties":False}}},"required":["entries"],"additionalProperties":False}},
     {"name":"chrome_bridge_get_elements","description":"List visible links, buttons, inputs, or all common interactive elements on the active tab.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["all","links","buttons","inputs"]},"maxItems":{"type":"integer","description":"Maximum number of elements to return."}},"additionalProperties":False}},
     {"name":"chrome_bridge_scroll","description":"Scroll the active tab vertically by a number of pixels.","inputSchema":{"type":"object","properties":{"deltaY":{"type":"integer","description":"Pixels to scroll. Positive scrolls down."}},"required":["deltaY"],"additionalProperties":False}},
+    {"name":"chrome_bridge_smooth_scroll","description":"Scroll the active tab in smaller human-like steps.","inputSchema":{"type":"object","properties":{"totalY":{"type":"integer"},"stepY":{"type":"integer"},"delayMs":{"type":"integer"}},"required":["totalY"],"additionalProperties":False}},
+    {"name":"chrome_bridge_infinite_scroll","description":"Scroll repeatedly to load more content until the page stabilizes.","inputSchema":{"type":"object","properties":{"maxPasses":{"type":"integer"},"stepY":{"type":"integer"},"delayMs":{"type":"integer"},"stablePasses":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_scroll_to_selector","description":"Scroll the page so a CSS selector is brought into view.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_click","description":"Click the first element matching a CSS selector in the active tab.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_move_cursor","description":"Move a visual cursor along a trajectory to a matching element.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"steps":{"type":"integer"},"durationMs":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_human_click","description":"Dispatch a more human-like pointer click on a selector.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"steps":{"type":"integer"},"button":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_double_click","description":"Double click the first element matching a CSS selector.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_right_click","description":"Open the context menu on the first element matching a CSS selector.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_hover","description":"Hover over the first element matching a CSS selector in the active tab.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_hover_inspect","description":"Hover and inspect whether menus, dialogs, or dropdowns appeared.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"waitMs":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_drag_and_drop","description":"Drag one element and drop it onto another selector.","inputSchema":{"type":"object","properties":{"sourceSelector":{"type":"string"},"targetSelector":{"type":"string"}},"required":["sourceSelector","targetSelector"],"additionalProperties":False}},
     {"name":"chrome_bridge_type","description":"Type text into the first element matching a CSS selector in the active tab.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"text":{"type":"string"}},"required":["selector","text"],"additionalProperties":False}},
+    {"name":"chrome_bridge_paste_text","description":"Paste text into an element more like a user paste action.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"text":{"type":"string"}},"required":["selector","text"],"additionalProperties":False}},
+    {"name":"chrome_bridge_type_into_editor","description":"Type into Monaco, CodeMirror, or contenteditable editors.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"text":{"type":"string"},"append":{"type":"boolean"}},"required":["text"],"additionalProperties":False}},
     {"name":"chrome_bridge_press_key","description":"Press a keyboard key in the active tab.","inputSchema":{"type":"object","properties":{"key":{"type":"string"},"ctrlKey":{"type":"boolean"},"altKey":{"type":"boolean"},"shiftKey":{"type":"boolean"},"metaKey":{"type":"boolean"}},"required":["key"],"additionalProperties":False}},
     {"name":"chrome_bridge_wait_for_selector","description":"Wait until a CSS selector appears and becomes visible in the active tab.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"timeoutMs":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_wait_for_text","description":"Wait until visible page text appears.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"timeoutMs":{"type":"integer"},"exact":{"type":"boolean"},"selector":{"type":"string"}},"required":["text"],"additionalProperties":False}},
     {"name":"chrome_bridge_select_option","description":"Select an option in a native <select> element.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"value":{"type":"string"},"label":{"type":"string"},"index":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_highlight_element","description":"Temporarily highlight a CSS selector on the page.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"color":{"type":"string"},"durationMs":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_screenshot","description":"Capture a screenshot of the current visible tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_full_page_screenshot","description":"Capture a full-page screenshot of the current tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_copy_page_content","description":"Copy the current page text or HTML to the system clipboard, even when the site blocks normal copy handlers.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["text","html"]},"maxLength":{"type":"integer","description":"Maximum number of characters to copy."}},"additionalProperties":False}},
     {"name":"chrome_bridge_select_text","description":"Select text on the page using a CSS selector or matching visible text.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"text":{"type":"string"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_select_text_by_drag","description":"Select all text from an element using a drag-like gesture.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_copy_selected_text","description":"Copy the current browser text selection to the clipboard.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_get_storage","description":"Read localStorage and/or sessionStorage from the page.","inputSchema":{"type":"object","properties":{"storage":{"type":"string","enum":["local","session","all"]}},"additionalProperties":False}},
     {"name":"chrome_bridge_extract_tables","description":"Extract structured table data from the page.","inputSchema":{"type":"object","properties":{"maxTables":{"type":"integer"},"maxRows":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_overview","description":"Return a compact structural overview of the current page.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_smart_focus","description":"Focus the most likely input or button on the page.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["input","button"]},"text":{"type":"string"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_open_file_picker","description":"Open the system file picker for an input[type=file].","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_get_session_memory","description":"Read short-term bridge memory for the current page session.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_clear_session_memory","description":"Clear short-term bridge memory for a tab or for all tabs.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_get_cookies","description":"Read cookies for the current page URL or a provided URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_download_url","description":"Download a file directly through the browser.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"filename":{"type":"string"},"saveAs":{"type":"boolean"}},"required":["url"],"additionalProperties":False}},
     {"name":"chrome_bridge_run_script","description":"Execute custom JavaScript in the page context and return a serialized result.","inputSchema":{"type":"object","properties":{"script":{"type":"string"}},"required":["script"],"additionalProperties":False}},
@@ -114,6 +131,11 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
         if "selector" in arguments: payload["selector"]=arguments["selector"]
         return as_text_content(call_bridge("clickByText",payload))
+    if name=="chrome_bridge_click_nearest_match":
+        payload={"text":arguments["text"]}
+        if "selector" in arguments: payload["selector"]=arguments["selector"]
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        return as_text_content(call_bridge("clickNearestMatch",payload))
     if name=="chrome_bridge_list_frames": return as_text_content(call_bridge("listFrames"))
     if name=="chrome_bridge_get_forms":
         payload={}
@@ -126,10 +148,43 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
         return as_text_content(call_bridge("getElements",payload))
     if name=="chrome_bridge_scroll": return as_text_content(call_bridge("scroll",{"deltaY":int(arguments.get("deltaY",0))}))
+    if name=="chrome_bridge_smooth_scroll":
+        payload={"totalY":int(arguments["totalY"])}
+        if "stepY" in arguments: payload["stepY"]=int(arguments["stepY"])
+        if "delayMs" in arguments: payload["delayMs"]=int(arguments["delayMs"])
+        return as_text_content(call_bridge("smoothScroll",payload))
+    if name=="chrome_bridge_infinite_scroll":
+        payload={}
+        for field in ("maxPasses","stepY","delayMs","stablePasses"):
+            if field in arguments: payload[field]=int(arguments[field])
+        return as_text_content(call_bridge("infiniteScroll",payload))
     if name=="chrome_bridge_scroll_to_selector": return as_text_content(call_bridge("scrollToSelector",{"selector":arguments["selector"]}))
     if name=="chrome_bridge_click": return as_text_content(call_bridge("click",{"selector":arguments["selector"]}))
+    if name=="chrome_bridge_move_cursor":
+        payload={"selector":arguments["selector"]}
+        if "steps" in arguments: payload["steps"]=int(arguments["steps"])
+        if "durationMs" in arguments: payload["durationMs"]=int(arguments["durationMs"])
+        return as_text_content(call_bridge("moveCursor",payload))
+    if name=="chrome_bridge_human_click":
+        payload={"selector":arguments["selector"]}
+        if "steps" in arguments: payload["steps"]=int(arguments["steps"])
+        if "button" in arguments: payload["button"]=int(arguments["button"])
+        return as_text_content(call_bridge("humanClick",payload))
+    if name=="chrome_bridge_double_click": return as_text_content(call_bridge("doubleClick",{"selector":arguments["selector"]}))
+    if name=="chrome_bridge_right_click": return as_text_content(call_bridge("rightClick",{"selector":arguments["selector"]}))
     if name=="chrome_bridge_hover": return as_text_content(call_bridge("hover",{"selector":arguments["selector"]}))
+    if name=="chrome_bridge_hover_inspect":
+        payload={"selector":arguments["selector"]}
+        if "waitMs" in arguments: payload["waitMs"]=int(arguments["waitMs"])
+        return as_text_content(call_bridge("hoverInspect",payload))
+    if name=="chrome_bridge_drag_and_drop": return as_text_content(call_bridge("dragAndDrop",{"sourceSelector":arguments["sourceSelector"],"targetSelector":arguments["targetSelector"]}))
     if name=="chrome_bridge_type": return as_text_content(call_bridge("type",{"selector":arguments["selector"],"text":arguments["text"]}))
+    if name=="chrome_bridge_paste_text": return as_text_content(call_bridge("pasteText",{"selector":arguments["selector"],"text":arguments["text"]}))
+    if name=="chrome_bridge_type_into_editor":
+        payload={"text":arguments["text"]}
+        if "selector" in arguments: payload["selector"]=arguments["selector"]
+        if "append" in arguments: payload["append"]=bool(arguments["append"])
+        return as_text_content(call_bridge("typeIntoEditor",payload))
     if name=="chrome_bridge_press_key":
         payload={"key":arguments["key"]}
         for field in ("ctrlKey","altKey","shiftKey","metaKey"):
@@ -139,6 +194,12 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         payload={"selector":arguments["selector"]}
         if "timeoutMs" in arguments: payload["timeoutMs"]=int(arguments["timeoutMs"])
         return as_text_content(call_bridge("waitForSelector",payload))
+    if name=="chrome_bridge_wait_for_text":
+        payload={"text":arguments["text"]}
+        if "timeoutMs" in arguments: payload["timeoutMs"]=int(arguments["timeoutMs"])
+        if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
+        if "selector" in arguments: payload["selector"]=arguments["selector"]
+        return as_text_content(call_bridge("waitForText",payload))
     if name=="chrome_bridge_select_option":
         payload={"selector":arguments["selector"]}
         for field in ("value","label","index"):
@@ -162,6 +223,7 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "selector" in arguments: payload["selector"]=arguments["selector"]
         if "text" in arguments: payload["text"]=arguments["text"]
         return as_text_content(call_bridge("selectText",payload))
+    if name=="chrome_bridge_select_text_by_drag": return as_text_content(call_bridge("selectTextByDrag",{"selector":arguments["selector"]}))
     if name=="chrome_bridge_copy_selected_text": return as_text_content(call_bridge("copySelectedText"))
     if name=="chrome_bridge_get_storage":
         payload={}
@@ -173,6 +235,20 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "maxRows" in arguments: payload["maxRows"]=int(arguments["maxRows"])
         return as_text_content(call_bridge("extractTables",payload))
     if name=="chrome_bridge_page_overview": return as_text_content(call_bridge("pageOverview"))
+    if name=="chrome_bridge_smart_focus":
+        payload={}
+        if "mode" in arguments: payload["mode"]=arguments["mode"]
+        if "text" in arguments: payload["text"]=arguments["text"]
+        return as_text_content(call_bridge("smartFocus",payload))
+    if name=="chrome_bridge_open_file_picker": return as_text_content(call_bridge("openFilePicker",{"selector":arguments["selector"]}))
+    if name=="chrome_bridge_get_session_memory":
+        payload={}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("getSessionMemory",payload))
+    if name=="chrome_bridge_clear_session_memory":
+        payload={}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("clearSessionMemory",payload))
     if name=="chrome_bridge_get_cookies":
         payload={}
         if "url" in arguments: payload["url"]=arguments["url"]
@@ -195,7 +271,7 @@ def main()->None:
         method=message.get("method"); msg_id=message.get("id")
         try:
             if method=="initialize":
-                send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.6"}})
+                send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.7"}})
             elif method=="notifications/initialized":
                 continue
             elif method=="tools/list":
