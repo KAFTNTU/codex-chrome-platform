@@ -22,7 +22,7 @@ function renderStatus(bridgeState) {
 
 function renderActiveTab(activeTab) {
   currentTabId = activeTab?.id ?? null;
-  el('activeTabTitle').textContent = activeTab?.title || 'Немає активної вкладки';
+  el('activeTabTitle').textContent = activeTab?.title || 'No active tab';
   el('activeTabUrl').textContent = activeTab?.url || '-';
 }
 
@@ -50,7 +50,7 @@ function renderNetwork(network) {
   const logs = network?.logs || [];
   el('networkCount').textContent = String(logs.length);
   if (!logs.length) {
-    list.innerHTML = '<div class="empty">Поки що немає мережевих подій</div>';
+    list.innerHTML = '<div class="empty">No network events yet</div>';
     return;
   }
   list.innerHTML = logs.map((item) => {
@@ -85,12 +85,35 @@ function renderNetwork(network) {
   }).join('');
 }
 
+function renderConsole(consoleState) {
+  const list = el('consoleList');
+  const logs = consoleState?.logs || [];
+  el('consoleCount').textContent = String(logs.length);
+  if (!logs.length) {
+    list.innerHTML = '<div class="empty">No console logs yet</div>';
+    return;
+  }
+  list.innerHTML = logs.map((item) => `
+    <div class="entry">
+      <div class="entry-top">
+        <strong>${esc(item.level || item.kind || 'log')}</strong>
+        <span class="sub">${new Date(item.at).toLocaleTimeString()}</span>
+      </div>
+      <div class="entry-meta">${esc(item.text || '')}</div>
+      ${item.url ? `<div class="entry-url mono">${esc(item.url)}</div>` : ''}
+      ${Array.isArray(item.stack) && item.stack.length ? `
+        <div class="entry-meta mono">${esc(item.stack.map((frame) => `${frame.functionName || '(anonymous)'} @ ${frame.url || ''}:${frame.lineNumber ?? ''}`).join(' | '))}</div>
+      ` : ''}
+    </div>
+  `).join('');
+}
+
 function renderCommands(commandLog) {
   const list = el('commandList');
   const items = commandLog || [];
   el('commandCount').textContent = String(items.length);
   if (!items.length) {
-    list.innerHTML = '<div class="empty">Поки що немає команд bridge</div>';
+    list.innerHTML = '<div class="empty">No bridge commands yet</div>';
     return;
   }
   list.innerHTML = items.map((item) => `
@@ -113,11 +136,13 @@ async function refresh() {
     renderActiveTab(state.activeTab);
     renderMonitorState(state.network);
     renderNetwork(state.network);
+    renderConsole(state.console);
     renderCommands(state.commandLog);
   } catch (error) {
     renderStatus({ connected: false, lastError: error.message || String(error) });
     renderMonitorState({ attachedTabId: null, logs: [] });
     renderNetwork({ logs: [] });
+    renderConsole({ logs: [] });
     renderCommands([]);
     showNotice('Bridge service worker is restarting', true);
   }

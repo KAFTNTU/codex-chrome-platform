@@ -2,7 +2,9 @@ const DEFAULT_SERVER = 'http://127.0.0.1:17373';
 const HIGHLIGHT_ID = '__codex_chrome_bridge_highlight__';
 const MAX_COMMAND_LOG = 60;
 const MAX_NETWORK_LOG = 120;
+const MAX_CONSOLE_LOG = 120;
 const MAX_SESSION_MEMORY = 80;
+const MAX_RESPONSE_BODY = 200000;
 
 let state = { connected: false, clientId: null, lastError: null, serverUrl: DEFAULT_SERVER };
 let commandLog = [];
@@ -10,16 +12,33 @@ let networkState = {
   attachedTabId: null,
   logsByTab: {},
   requestsByTab: {},
+  responseBodiesByTab: {},
+};
+let consoleState = {
+  attachedTabId: null,
+  logsByTab: {},
 };
 let sessionMemory = {
   byTab: {},
 };
+let macroState = {
+  recording: false,
+  name: null,
+  actions: [],
+  startedAt: null,
+};
+let namedRecipes = {};
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(['clientId', 'serverUrl']);
+  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'namedRecipes']);
   state.clientId = stored.clientId || crypto.randomUUID();
   state.serverUrl = stored.serverUrl || DEFAULT_SERVER;
+  namedRecipes = stored.namedRecipes || {};
   await chrome.storage.local.set({ clientId: state.clientId, serverUrl: state.serverUrl });
+}
+
+async function persistRecipes() {
+  await chrome.storage.local.set({ namedRecipes });
 }
 
 async function persistBridgeState() {
@@ -80,7 +99,94 @@ function ensureTabBuckets(tabId) {
   const key = String(tabId);
   networkState.logsByTab[key] ||= [];
   networkState.requestsByTab[key] ||= {};
+  networkState.responseBodiesByTab[key] ||= {};
+  consoleState.logsByTab[key] ||= [];
   return key;
+}
+
+function appendConsoleEntry(tabId, entry) {
+  const key = ensureTabBuckets(tabId);
+  consoleState.logsByTab[key] = [{
+    at: new Date().toISOString(),
+    ...entry,
+  }, ...consoleState.logsByTab[key]].slice(0, MAX_CONSOLE_LOG);
+}
+
+function getConsoleSnapshot(tabId = null) {
+  const resolvedTabId = tabId != null ? Number(tabId) : consoleState.attachedTabId;
+  const key = resolvedTabId != null ? String(resolvedTabId) : null;
+  return {
+    attachedTabId: consoleState.attachedTabId,
+    tabId: resolvedTabId,
+    logs: key ? (consoleState.logsByTab[key] || []) : [],
+  };
+}
+
+function clearConsoleLog(tabId = null) {
+  const resolvedTabId = tabId != null ? Number(tabId) : consoleState.attachedTabId;
+  if (resolvedTabId == null) return { cleared: true, tabId: null };
+  consoleState.logsByTab[String(resolvedTabId)] = [];
+  return { cleared: true, tabId: resolvedTabId };
+}
+
+function normalizeResponseBody(body, base64Encoded, mimeType = '') {
+  if (!body) {
+    return { body: '', base64Encoded: !!base64Encoded, preview: '' };
+  }
+  const isTextLike = /json|javascript|xml|html|text|svg|x-www-form-urlencoded/i.test(mimeType || '');
+  if (base64Encoded && !isTextLike) {
+    return {
+      body: String(body).slice(0, MAX_RESPONSE_BODY),
+      base64Encoded: true,
+      preview: '[binary]',
+    };
+  }
+  try {
+    const rawBody = base64Encoded ? atob(body) : body;
+    return {
+      body: String(rawBody).slice(0, MAX_RESPONSE_BODY),
+      base64Encoded: false,
+      preview: previewText(rawBody),
+    };
+  } catch {
+    return {
+      body: String(body).slice(0, MAX_RESPONSE_BODY),
+      base64Encoded: !!base64Encoded,
+      preview: previewText(body),
+    };
+  }
+}
+
+function getRecordedResponseBody(tabId, requestId) {
+  const key = String(tabId);
+  return networkState.responseBodiesByTab[key]?.[requestId] || null;
+}
+
+function shouldRecordMacroAction(action) {
+  return !new Set([
+    'startMacroRecording',
+    'stopMacroRecording',
+    'getMacroState',
+    'saveRecipe',
+    'listRecipes',
+    'deleteRecipe',
+    'runRecipe',
+  ]).has(action);
+}
+
+function recordMacroAction(action, params) {
+  if (!macroState.recording || !shouldRecordMacroAction(action)) return;
+  macroState.actions.push({
+    action,
+    params: JSON.parse(JSON.stringify(params || {})),
+  });
+}
+
+function getMacroState() {
+  return {
+    ...macroState,
+    actionCount: macroState.actions.length,
+  };
 }
 
 function previewText(value, maxLength = 400) {
@@ -106,9 +212,13 @@ async function attachNetworkMonitor(tabId) {
   }
   await chrome.debugger.attach(debuggerTarget(resolvedTabId), '1.3');
   await chrome.debugger.sendCommand(debuggerTarget(resolvedTabId), 'Network.enable');
+  await chrome.debugger.sendCommand(debuggerTarget(resolvedTabId), 'Runtime.enable');
+  await chrome.debugger.sendCommand(debuggerTarget(resolvedTabId), 'Log.enable');
   ensureTabBuckets(resolvedTabId);
   networkState.attachedTabId = resolvedTabId;
+  consoleState.attachedTabId = resolvedTabId;
   appendNetworkEntry(resolvedTabId, { kind: 'system', message: 'Network monitor attached' });
+  appendConsoleEntry(resolvedTabId, { kind: 'system', level: 'info', text: 'Console monitor attached' });
   return { attached: true, tabId: resolvedTabId };
 }
 
@@ -123,6 +233,10 @@ async function detachNetworkMonitor(tabId = null) {
   if (networkState.attachedTabId === resolvedTabId) {
     appendNetworkEntry(resolvedTabId, { kind: 'system', message: 'Network monitor detached' });
     networkState.attachedTabId = null;
+  }
+  if (consoleState.attachedTabId === resolvedTabId) {
+    appendConsoleEntry(resolvedTabId, { kind: 'system', level: 'info', text: 'Console monitor detached' });
+    consoleState.attachedTabId = null;
   }
   return { detached: true, tabId: resolvedTabId };
 }
@@ -143,6 +257,7 @@ function clearNetworkLog(tabId = null) {
   const key = ensureTabBuckets(resolvedTabId);
   networkState.logsByTab[key] = [];
   networkState.requestsByTab[key] = {};
+  networkState.responseBodiesByTab[key] = {};
   return { cleared: true, tabId: resolvedTabId };
 }
 
@@ -226,7 +341,11 @@ async function runAndRemember(action, func, args = [], tabId = null, detailBuild
 }
 
 async function executeStructuredDomActions(actions, tabId = null) {
-  return await runAndRemember('domActions', (items) => {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: resolvedTabId },
+    world: 'MAIN',
+    func: (items) => {
     const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
     const isVisible = (el) => {
       if (!el) return false;
@@ -234,10 +353,26 @@ async function executeStructuredDomActions(actions, tabId = null) {
       const rect = el.getBoundingClientRect();
       return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
     };
+    const queryAllDeep = (selector) => {
+      const matches = [];
+      const roots = [document];
+      while (roots.length) {
+        const root = roots.shift();
+        if (root.querySelectorAll) {
+          matches.push(...root.querySelectorAll(selector));
+        }
+        const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+        for (const node of nodes) {
+          if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+      }
+      return matches;
+    };
+    const queryDeep = (selector) => queryAllDeep(selector)[0] || null;
     const findByText = (text, selector) => {
       const needle = norm(text).toLowerCase();
       if (!needle) return null;
-      const nodes = Array.from(document.querySelectorAll(selector || 'a, button, input, select, textarea, label, summary, [role="button"], [onclick], [contenteditable="true"], div, span'));
+      const nodes = queryAllDeep(selector || 'a, button, input, select, textarea, label, summary, [role="button"], [onclick], [contenteditable="true"], div, span');
       return nodes.find((node) => isVisible(node) && norm(node.innerText || node.textContent || node.value || '').toLowerCase().includes(needle)) || null;
     };
     const results = [];
@@ -306,8 +441,90 @@ async function executeStructuredDomActions(actions, tabId = null) {
           });
           continue;
         }
+        if (action === 'blocklyExportXml') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws || !window.Blockly || !Blockly.Xml) throw new Error('Blockly XML API not available');
+          const xmlDom = Blockly.Xml.workspaceToDom(ws);
+          const xmlText = Blockly.Xml.domToText(xmlDom);
+          results.push({ action, ok: true, xml: xmlText, blockCount: ws.getAllBlocks(false).length });
+          continue;
+        }
+        if (action === 'blocklyInspectBlocks') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws) throw new Error('Blockly workspace not found');
+          const blocks = ws.getAllBlocks(false).map((block) => ({
+            id: block.id,
+            type: block.type,
+            fields: block.inputList.flatMap((input) => input.fieldRow.map((field) => ({
+              name: field.name || null,
+              value: field.getValue ? field.getValue() : null,
+              text: field.getText ? field.getText() : null,
+            }))).filter((field) => field.name),
+            inputs: block.inputList.map((input) => ({
+              name: input.name || null,
+              type: input.type,
+            })),
+          }));
+          results.push({ action, ok: true, blocks });
+          continue;
+        }
+        if (action === 'blocklyMutateBlock') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws || !window.Blockly) throw new Error('Blockly workspace not found');
+          const target = item.blockId
+            ? ws.getBlockById(String(item.blockId))
+            : ws.getAllBlocks(false).find((block) => block.type === item.blockType) || null;
+          if (!target) throw new Error('Target block not found');
+          if (typeof target.domToMutation !== 'function') throw new Error('Target block does not support mutations');
+          const mutation = document.createElement('mutation');
+          for (const [key, value] of Object.entries(item.mutation || {})) {
+            mutation.setAttribute(key, String(value));
+          }
+          target.domToMutation(mutation);
+          target.initSvg && target.initSvg();
+          target.render && target.render();
+          results.push({ action, ok: true, blockId: target.id, blockType: target.type });
+          continue;
+        }
+        if (action === 'blocklySetField') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws) throw new Error('Blockly workspace not found');
+          const target = item.blockId
+            ? ws.getBlockById(String(item.blockId))
+            : ws.getAllBlocks(false).find((block) => block.type === item.blockType) || null;
+          if (!target) throw new Error('Target block not found');
+          if (!target.getField(item.field)) throw new Error(`Field not found: ${item.field}`);
+          target.setFieldValue(String(item.value ?? ''), item.field);
+          target.render && target.render();
+          results.push({ action, ok: true, blockId: target.id, field: item.field, value: item.value });
+          continue;
+        }
+        if (action === 'blocklyAutoLayout') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws) throw new Error('Blockly workspace not found');
+          ws.cleanUp && ws.cleanUp();
+          ws.render && ws.render();
+          results.push({ action, ok: true, blockCount: ws.getAllBlocks(false).length });
+          continue;
+        }
+        if (action === 'blocklyUndo') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws || typeof ws.undo !== 'function') throw new Error('Blockly undo not available');
+          ws.undo(false);
+          ws.render && ws.render();
+          results.push({ action, ok: true });
+          continue;
+        }
+        if (action === 'blocklyRedo') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws || typeof ws.undo !== 'function') throw new Error('Blockly redo not available');
+          ws.undo(true);
+          ws.render && ws.render();
+          results.push({ action, ok: true });
+          continue;
+        }
         if (action === 'clickSelector') {
-          const el = document.querySelector(item.selector);
+          const el = queryDeep(item.selector);
           if (!el) throw new Error(`Selector not found: ${item.selector}`);
           el.click();
           results.push({ action, ok: true, selector: item.selector });
@@ -321,7 +538,7 @@ async function executeStructuredDomActions(actions, tabId = null) {
           continue;
         }
         if (action === 'typeSelector') {
-          const el = document.querySelector(item.selector);
+          const el = queryDeep(item.selector);
           if (!el) throw new Error(`Selector not found: ${item.selector}`);
           el.focus();
           if ('value' in el) {
@@ -337,21 +554,21 @@ async function executeStructuredDomActions(actions, tabId = null) {
           continue;
         }
         if (action === 'setTextContent') {
-          const el = document.querySelector(item.selector);
+          const el = queryDeep(item.selector);
           if (!el) throw new Error(`Selector not found: ${item.selector}`);
           el.textContent = String(item.text || '');
           results.push({ action, ok: true, selector: item.selector });
           continue;
         }
         if (action === 'setAttribute') {
-          const el = document.querySelector(item.selector);
+          const el = queryDeep(item.selector);
           if (!el) throw new Error(`Selector not found: ${item.selector}`);
           el.setAttribute(String(item.name || ''), String(item.value || ''));
           results.push({ action, ok: true, selector: item.selector, name: item.name });
           continue;
         }
         if (action === 'focusSelector') {
-          const el = document.querySelector(item.selector);
+          const el = queryDeep(item.selector);
           if (!el) throw new Error(`Selector not found: ${item.selector}`);
           el.focus();
           results.push({ action, ok: true, selector: item.selector });
@@ -385,9 +602,13 @@ async function executeStructuredDomActions(actions, tabId = null) {
       }
     }
     return { ok: results.every((entry) => entry.ok), results };
-  }, [actions || []], tabId, (result) => ({
+    },
+    args: [actions || []],
+  });
+  recordSessionEvent(resolvedTabId, 'domActions', {
     actionCount: result?.results?.length || 0,
-  }));
+  });
+  return result;
 }
 
 async function listTabs(currentWindowOnly = false) {
@@ -486,12 +707,185 @@ function normalizeCopyMode(mode) {
   return mode === 'html' ? 'html' : 'text';
 }
 
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+async function captureElementScreenshot(selector, tabId = null, padding = 10) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const elementInfo = await chrome.scripting.executeScript({
+    target: { tabId: resolvedTabId },
+    world: 'MAIN',
+    func: (inputSelector, extraPadding) => {
+      const queryDeep = (selector) => {
+        const roots = [document];
+        while (roots.length) {
+          const root = roots.shift();
+          const found = root.querySelector?.(selector);
+          if (found) return found;
+          const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+          for (const node of nodes) {
+            if (node.shadowRoot) roots.push(node.shadowRoot);
+          }
+        }
+        return null;
+      };
+      const el = queryDeep(inputSelector);
+      if (!el) throw new Error(`Selector not found: ${inputSelector}`);
+      el.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+      const rect = el.getBoundingClientRect();
+      return {
+        title: document.title,
+        url: location.href,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        rect: {
+          left: Math.max(0, rect.left - extraPadding),
+          top: Math.max(0, rect.top - extraPadding),
+          width: rect.width + extraPadding * 2,
+          height: rect.height + extraPadding * 2,
+        },
+      };
+    },
+    args: [selector, Math.max(0, Number(padding || 0))],
+  });
+  const meta = elementInfo?.[0]?.result;
+  if (!meta?.rect) throw new Error('Could not measure element for screenshot');
+  const shot = await captureScreenshot(resolvedTabId);
+  const response = await fetch(shot.dataUrl);
+  const blob = await response.blob();
+  const bitmap = await createImageBitmap(blob);
+  const scale = meta.devicePixelRatio || 1;
+  const srcX = Math.max(0, Math.round(meta.rect.left * scale));
+  const srcY = Math.max(0, Math.round(meta.rect.top * scale));
+  const srcW = Math.max(1, Math.min(bitmap.width - srcX, Math.round(meta.rect.width * scale)));
+  const srcH = Math.max(1, Math.min(bitmap.height - srcY, Math.round(meta.rect.height * scale)));
+  const canvas = new OffscreenCanvas(srcW, srcH);
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(bitmap, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
+  const outBlob = await canvas.convertToBlob({ type: 'image/png' });
+  const outBuffer = await outBlob.arrayBuffer();
+  return {
+    tab: shot.tab,
+    title: meta.title,
+    url: meta.url,
+    selector,
+    format: 'png',
+    width: srcW,
+    height: srcH,
+    dataUrl: `data:image/png;base64,${arrayBufferToBase64(outBuffer)}`,
+  };
+}
+
+async function setFileInputFiles(selector, files, tabId = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const marker = `codex-file-target-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const marked = await chrome.scripting.executeScript({
+    target: { tabId: resolvedTabId },
+    world: 'MAIN',
+    func: (inputSelector, markerName) => {
+      const queryDeep = (selector) => {
+        const roots = [document];
+        while (roots.length) {
+          const root = roots.shift();
+          const found = root.querySelector?.(selector);
+          if (found) return found;
+          const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+          for (const node of nodes) {
+            if (node.shadowRoot) roots.push(node.shadowRoot);
+          }
+        }
+        return null;
+      };
+      const el = queryDeep(inputSelector);
+      if (!el) throw new Error(`Selector not found: ${inputSelector}`);
+      if (!(el instanceof HTMLInputElement) || el.type !== 'file') {
+        throw new Error('Target is not an input[type="file"]');
+      }
+      el.setAttribute('data-codex-file-target', markerName);
+      return { marked: true };
+    },
+    args: [selector, marker],
+  });
+  if (!marked?.[0]?.result?.marked) throw new Error('Failed to mark file input');
+  return await withDebugger(resolvedTabId, async (debugTabId) => {
+    await chrome.debugger.sendCommand(debuggerTarget(debugTabId), 'DOM.enable');
+    const root = await chrome.debugger.sendCommand(debuggerTarget(debugTabId), 'DOM.getDocument', { depth: -1, pierce: true });
+    const node = await chrome.debugger.sendCommand(debuggerTarget(debugTabId), 'DOM.querySelector', {
+      nodeId: root.root.nodeId,
+      selector: `[data-codex-file-target="${marker}"]`,
+    });
+    if (!node?.nodeId) throw new Error('Could not resolve file input in DOM');
+    await chrome.debugger.sendCommand(debuggerTarget(debugTabId), 'DOM.setFileInputFiles', {
+      nodeId: node.nodeId,
+      files: (files || []).map((file) => String(file)),
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId: debugTabId },
+      world: 'MAIN',
+      func: (markerName) => {
+        const el = document.querySelector(`[data-codex-file-target="${markerName}"]`);
+        if (!el) return;
+        el.removeAttribute('data-codex-file-target');
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+      args: [marker],
+    });
+    return { ok: true, selector, fileCount: (files || []).length };
+  });
+}
+
+async function inspectCanvas(maxItems = 5, includeDataUrl = false, tabId = null) {
+  return await chrome.scripting.executeScript({
+    target: { tabId: await resolveTargetTabId(tabId) },
+    world: 'MAIN',
+    func: (limit, withData) => {
+      const canvases = [];
+      const roots = [document];
+      while (roots.length) {
+        const root = roots.shift();
+        const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+        for (const node of nodes) {
+          if (node instanceof HTMLCanvasElement) canvases.push(node);
+          if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+      }
+      return {
+        title: document.title,
+        url: location.href,
+        canvases: canvases.slice(0, limit).map((canvas, index) => {
+          const rect = canvas.getBoundingClientRect();
+          return {
+            index,
+            width: canvas.width,
+            height: canvas.height,
+            clientWidth: Math.round(rect.width),
+            clientHeight: Math.round(rect.height),
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+            dataUrl: withData ? canvas.toDataURL('image/png') : undefined,
+          };
+        }),
+      };
+    },
+    args: [Math.max(1, Number(maxItems || 5)), !!includeDataUrl],
+  }).then((items) => items?.[0]?.result);
+}
+
 async function handleCommand(command) {
   const params = command.params || {};
   pushCommandLog({
     action: command.action,
     paramsPreview: previewText(JSON.stringify(params)),
   });
+  recordMacroAction(command.action, params);
   switch (command.action) {
     case 'getActiveTab':
       return await activeTab();
@@ -1223,6 +1617,8 @@ async function handleCommand(command) {
       }, [params.selector, params.color || '#ffcc00', params.durationMs || 2000, HIGHLIGHT_ID], params.tabId ?? null);
     case 'screenshot':
       return await captureScreenshot(params.tabId ?? null);
+    case 'elementScreenshot':
+      return await captureElementScreenshot(params.selector, params.tabId ?? null, params.padding ?? 10);
     case 'fullPageScreenshot': {
       const data = await withDebugger(params.tabId ?? null, async (resolvedTabId) => {
         await chrome.debugger.sendCommand(debuggerTarget(resolvedTabId), 'Page.enable');
@@ -1360,6 +1756,8 @@ async function handleCommand(command) {
           });
         return { title: document.title, url: location.href, tables };
       }, [params.maxTables || 10, params.maxRows || 20], params.tabId ?? null);
+    case 'canvasInspect':
+      return await inspectCanvas(params.maxItems || 5, !!params.includeDataUrl, params.tabId ?? null);
     case 'pageOverview':
       return await executeInTab(() => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -1438,10 +1836,28 @@ async function handleCommand(command) {
         el.click();
         return { opened: true, selector, awaitsUserSelection: true };
       }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
+    case 'setFileInputFiles':
+      return await setFileInputFiles(params.selector, params.files || [], params.tabId ?? null);
     case 'getSessionMemory':
       return getSessionMemory(params.tabId ?? null);
     case 'clearSessionMemory':
       return clearSessionMemory(params.tabId ?? null);
+    case 'getConsoleLog':
+      return getConsoleSnapshot(params.tabId ?? null);
+    case 'clearConsoleLog':
+      return clearConsoleLog(params.tabId ?? null);
+    case 'readResponseBody': {
+      const resolvedTabId = await resolveTargetTabId(params.tabId ?? null);
+      const requestId = String(params.requestId || '');
+      if (!requestId) throw new Error('requestId is required');
+      const responseBody = getRecordedResponseBody(resolvedTabId, requestId);
+      if (!responseBody) throw new Error(`No recorded response body for requestId: ${requestId}`);
+      return {
+        tabId: resolvedTabId,
+        requestId,
+        ...responseBody,
+      };
+    }
     case 'getCookies': {
       const url = params.url || await getPageUrl(params.tabId ?? null);
       const cookies = await chrome.cookies.getAll({ url });
@@ -1459,6 +1875,57 @@ async function handleCommand(command) {
     }
     case 'domActions':
       return await executeStructuredDomActions(params.actions || [], params.tabId ?? null);
+    case 'startMacroRecording':
+      macroState = {
+        recording: true,
+        name: params.name || null,
+        actions: [],
+        startedAt: new Date().toISOString(),
+      };
+      return getMacroState();
+    case 'stopMacroRecording': {
+      const finished = getMacroState();
+      macroState.recording = false;
+      if (params.saveAs || macroState.name) {
+        namedRecipes[params.saveAs || macroState.name] = finished.actions;
+        await persistRecipes();
+      }
+      return finished;
+    }
+    case 'getMacroState':
+      return getMacroState();
+    case 'saveRecipe':
+      if (!params.name) throw new Error('name is required');
+      namedRecipes[String(params.name)] = params.actions || [];
+      await persistRecipes();
+      return { ok: true, name: String(params.name), actionCount: namedRecipes[String(params.name)].length };
+    case 'listRecipes':
+      return {
+        recipes: Object.entries(namedRecipes).map(([name, actions]) => ({
+          name,
+          actionCount: Array.isArray(actions) ? actions.length : 0,
+        })),
+      };
+    case 'deleteRecipe':
+      if (!params.name) throw new Error('name is required');
+      delete namedRecipes[String(params.name)];
+      await persistRecipes();
+      return { ok: true, deleted: String(params.name) };
+    case 'runRecipe': {
+      const name = String(params.name || '');
+      if (!name) throw new Error('name is required');
+      const recipe = namedRecipes[name];
+      if (!Array.isArray(recipe)) throw new Error(`Unknown recipe: ${name}`);
+      const results = [];
+      for (const step of recipe) {
+        const stepParams = { ...(step.params || {}) };
+        if (params.tabId != null && stepParams.tabId == null) {
+          stepParams.tabId = params.tabId;
+        }
+        results.push(await handleCommand({ action: step.action, params: stepParams }));
+      }
+      return { ok: true, name, stepCount: recipe.length, results };
+    }
     case 'runScript':
       return await executeInTab((script) => {
         const serialize = (value) => {
@@ -1499,9 +1966,52 @@ async function handleCommand(command) {
 
 chrome.debugger.onEvent.addListener(async (source, method, params) => {
   const tabId = source.tabId;
-  if (tabId == null || networkState.attachedTabId !== tabId) return;
+  if (tabId == null) return;
+  const consoleAttached = consoleState.attachedTabId === tabId;
+  const networkAttached = networkState.attachedTabId === tabId;
+  if (!consoleAttached && !networkAttached) return;
   const key = ensureTabBuckets(tabId);
   const requestMap = networkState.requestsByTab[key];
+
+  if (consoleAttached && method === 'Runtime.consoleAPICalled') {
+    appendConsoleEntry(tabId, {
+      kind: 'console',
+      level: params.type || 'log',
+      text: (params.args || []).map((arg) => arg?.value ?? arg?.description ?? '').join(' ').trim(),
+      stack: params.stackTrace?.callFrames?.slice(0, 6).map((frame) => ({
+        url: frame.url,
+        functionName: frame.functionName,
+        lineNumber: frame.lineNumber,
+        columnNumber: frame.columnNumber,
+      })) || [],
+    });
+    return;
+  }
+
+  if (consoleAttached && method === 'Runtime.exceptionThrown') {
+    appendConsoleEntry(tabId, {
+      kind: 'exception',
+      level: 'error',
+      text: params.exceptionDetails?.text || params.exceptionDetails?.exception?.description || 'Runtime exception',
+      url: params.exceptionDetails?.url || '',
+      lineNumber: params.exceptionDetails?.lineNumber,
+      columnNumber: params.exceptionDetails?.columnNumber,
+    });
+    return;
+  }
+
+  if (consoleAttached && method === 'Log.entryAdded') {
+    appendConsoleEntry(tabId, {
+      kind: 'log',
+      level: params.entry?.level || 'info',
+      text: params.entry?.text || '',
+      url: params.entry?.url || '',
+      lineNumber: params.entry?.lineNumber,
+    });
+    return;
+  }
+
+  if (!networkAttached) return;
 
   if (method === 'Network.requestWillBeSent') {
     requestMap[params.requestId] = {
@@ -1546,18 +2056,24 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   if (method === 'Network.loadingFinished') {
     const entry = requestMap[params.requestId] || {};
     const durationMs = entry.startedAt ? Date.now() - entry.startedAt : null;
-    let responseBodyPreview = '';
+    let responseMeta = { body: '', base64Encoded: false, preview: '' };
     try {
       const response = await chrome.debugger.sendCommand(debuggerTarget(tabId), 'Network.getResponseBody', {
         requestId: params.requestId,
       });
-      if (response?.body) {
-        const rawBody = response.base64Encoded ? atob(response.body) : response.body;
-        responseBodyPreview = previewText(rawBody);
-      }
+      responseMeta = normalizeResponseBody(response?.body || '', !!response?.base64Encoded, entry.mimeType || '');
     } catch {
-      responseBodyPreview = '';
+      responseMeta = { body: '', base64Encoded: false, preview: '' };
     }
+    networkState.responseBodiesByTab[key][params.requestId] = {
+      url: entry.responseUrl || entry.url,
+      mimeType: entry.mimeType || '',
+      status: entry.status || null,
+      method: entry.method || '',
+      body: responseMeta.body,
+      base64Encoded: responseMeta.base64Encoded,
+      preview: responseMeta.preview,
+    };
     appendNetworkEntry(tabId, {
       kind: 'finished',
       requestId: params.requestId,
@@ -1567,7 +2083,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       mimeType: entry.mimeType,
       durationMs,
       requestBodyPreview: entry.requestBodyPreview || '',
-      responseBodyPreview,
+      responseBodyPreview: responseMeta.preview,
     });
     delete requestMap[params.requestId];
     return;
@@ -1594,6 +2110,10 @@ chrome.debugger.onDetach.addListener((source, reason) => {
     appendNetworkEntry(tabId, { kind: 'system', message: `Network monitor detached: ${reason}` });
     networkState.attachedTabId = null;
   }
+  if (consoleState.attachedTabId === tabId) {
+    appendConsoleEntry(tabId, { kind: 'system', level: 'warn', text: `Console monitor detached: ${reason}` });
+    consoleState.attachedTabId = null;
+  }
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -1606,6 +2126,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         activeTab: await activeTab(),
         commandLog,
         network: getNetworkSnapshot(message.tabId ?? null),
+        console: getConsoleSnapshot(message.tabId ?? null),
+        macro: getMacroState(),
+        recipes: Object.keys(namedRecipes),
       });
       return;
     }

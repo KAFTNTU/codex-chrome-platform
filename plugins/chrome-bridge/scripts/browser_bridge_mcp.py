@@ -42,6 +42,7 @@ TOOLS = [
     {"name":"chrome_bridge_select_option","description":"Select an option in a native <select> element.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"value":{"type":"string"},"label":{"type":"string"},"index":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_highlight_element","description":"Temporarily highlight a CSS selector on the page.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"color":{"type":"string"},"durationMs":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_screenshot","description":"Capture a screenshot of the current visible tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_element_screenshot","description":"Capture a screenshot cropped to a matching element selector.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"padding":{"type":"integer"},"tabId":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_full_page_screenshot","description":"Capture a full-page screenshot of the current tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_copy_page_content","description":"Copy the current page text or HTML to the system clipboard, even when the site blocks normal copy handlers.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["text","html"]},"maxLength":{"type":"integer","description":"Maximum number of characters to copy."}},"additionalProperties":False}},
     {"name":"chrome_bridge_select_text","description":"Select text on the page using a CSS selector or matching visible text.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"text":{"type":"string"}},"additionalProperties":False}},
@@ -49,13 +50,25 @@ TOOLS = [
     {"name":"chrome_bridge_copy_selected_text","description":"Copy the current browser text selection to the clipboard.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_get_storage","description":"Read localStorage and/or sessionStorage from the page.","inputSchema":{"type":"object","properties":{"storage":{"type":"string","enum":["local","session","all"]}},"additionalProperties":False}},
     {"name":"chrome_bridge_extract_tables","description":"Extract structured table data from the page.","inputSchema":{"type":"object","properties":{"maxTables":{"type":"integer"},"maxRows":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_canvas_inspect","description":"Inspect canvas elements on the page and optionally return previews.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeDataUrl":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_overview","description":"Return a compact structural overview of the current page.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_smart_focus","description":"Focus the most likely input or button on the page.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["input","button"]},"text":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_open_file_picker","description":"Open the system file picker for an input[type=file].","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
+    {"name":"chrome_bridge_set_file_input_files","description":"Set files on an input[type=file] using local filesystem paths.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"tabId":{"type":"integer"}},"required":["selector","files"],"additionalProperties":False}},
     {"name":"chrome_bridge_get_session_memory","description":"Read short-term bridge memory for the current page session.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_clear_session_memory","description":"Clear short-term bridge memory for a tab or for all tabs.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_get_console_log","description":"Read captured console logs and page exceptions without opening DevTools.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_clear_console_log","description":"Clear captured console logs for a tab.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_get_cookies","description":"Read cookies for the current page URL or a provided URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_download_url","description":"Download a file directly through the browser.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"filename":{"type":"string"},"saveAs":{"type":"boolean"}},"required":["url"],"additionalProperties":False}},
+    {"name":"chrome_bridge_read_response_body","description":"Read the stored full response body for a captured network request id.","inputSchema":{"type":"object","properties":{"requestId":{"type":"string"},"tabId":{"type":"integer"}},"required":["requestId"],"additionalProperties":False}},
+    {"name":"chrome_bridge_start_macro_recording","description":"Start recording bridge commands into a reusable macro.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_stop_macro_recording","description":"Stop recording a macro and optionally save it as a named recipe.","inputSchema":{"type":"object","properties":{"saveAs":{"type":"string"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_get_macro_state","description":"Read the current macro recorder state.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_save_recipe","description":"Save a named recipe made of bridge action steps.","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"actions":{"type":"array","items":{"type":"object"}}},"required":["name","actions"],"additionalProperties":False}},
+    {"name":"chrome_bridge_list_recipes","description":"List saved named recipes.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_delete_recipe","description":"Delete a saved named recipe.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":False}},
+    {"name":"chrome_bridge_run_recipe","description":"Run a saved named recipe.","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"tabId":{"type":"integer"}},"required":["name"],"additionalProperties":False}},
     {"name":"chrome_bridge_dom_actions","description":"Run a CSP-safe structured list of DOM actions such as Blockly block insertion, clicks, typing, notes, and attribute updates.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"},"actions":{"type":"array","items":{"type":"object","properties":{"action":{"type":"string"}},"required":["action"],"additionalProperties":True}}},"required":["actions"],"additionalProperties":False}},
     {"name":"chrome_bridge_run_script","description":"Execute custom JavaScript in the page context and return a serialized result.","inputSchema":{"type":"object","properties":{"script":{"type":"string"}},"required":["script"],"additionalProperties":False}},
     {"name":"chrome_bridge_navigate","description":"Navigate the active tab to a URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":False}},
@@ -213,6 +226,11 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "durationMs" in arguments: payload["durationMs"]=int(arguments["durationMs"])
         return as_text_content(call_bridge("highlightElement",payload))
     if name=="chrome_bridge_screenshot": return as_text_content(call_bridge("screenshot"))
+    if name=="chrome_bridge_element_screenshot":
+        payload={"selector":arguments["selector"]}
+        if "padding" in arguments: payload["padding"]=int(arguments["padding"])
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("elementScreenshot",payload))
     if name=="chrome_bridge_full_page_screenshot": return as_text_content(call_bridge("fullPageScreenshot"))
     if name=="chrome_bridge_copy_page_content":
         payload={}
@@ -235,6 +253,12 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "maxTables" in arguments: payload["maxTables"]=int(arguments["maxTables"])
         if "maxRows" in arguments: payload["maxRows"]=int(arguments["maxRows"])
         return as_text_content(call_bridge("extractTables",payload))
+    if name=="chrome_bridge_canvas_inspect":
+        payload={}
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        if "includeDataUrl" in arguments: payload["includeDataUrl"]=bool(arguments["includeDataUrl"])
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("canvasInspect",payload))
     if name=="chrome_bridge_page_overview": return as_text_content(call_bridge("pageOverview"))
     if name=="chrome_bridge_smart_focus":
         payload={}
@@ -242,6 +266,10 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "text" in arguments: payload["text"]=arguments["text"]
         return as_text_content(call_bridge("smartFocus",payload))
     if name=="chrome_bridge_open_file_picker": return as_text_content(call_bridge("openFilePicker",{"selector":arguments["selector"]}))
+    if name=="chrome_bridge_set_file_input_files":
+        payload={"selector":arguments["selector"],"files":arguments["files"]}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("setFileInputFiles",payload))
     if name=="chrome_bridge_get_session_memory":
         payload={}
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
@@ -250,6 +278,14 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         payload={}
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
         return as_text_content(call_bridge("clearSessionMemory",payload))
+    if name=="chrome_bridge_get_console_log":
+        payload={}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("getConsoleLog",payload))
+    if name=="chrome_bridge_clear_console_log":
+        payload={}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("clearConsoleLog",payload))
     if name=="chrome_bridge_get_cookies":
         payload={}
         if "url" in arguments: payload["url"]=arguments["url"]
@@ -259,6 +295,26 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "filename" in arguments: payload["filename"]=arguments["filename"]
         if "saveAs" in arguments: payload["saveAs"]=bool(arguments["saveAs"])
         return as_text_content(call_bridge("downloadUrl",payload))
+    if name=="chrome_bridge_read_response_body":
+        payload={"requestId":arguments["requestId"]}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("readResponseBody",payload))
+    if name=="chrome_bridge_start_macro_recording":
+        payload={}
+        if "name" in arguments: payload["name"]=arguments["name"]
+        return as_text_content(call_bridge("startMacroRecording",payload))
+    if name=="chrome_bridge_stop_macro_recording":
+        payload={}
+        if "saveAs" in arguments: payload["saveAs"]=arguments["saveAs"]
+        return as_text_content(call_bridge("stopMacroRecording",payload))
+    if name=="chrome_bridge_get_macro_state": return as_text_content(call_bridge("getMacroState"))
+    if name=="chrome_bridge_save_recipe": return as_text_content(call_bridge("saveRecipe",{"name":arguments["name"],"actions":arguments["actions"]}))
+    if name=="chrome_bridge_list_recipes": return as_text_content(call_bridge("listRecipes"))
+    if name=="chrome_bridge_delete_recipe": return as_text_content(call_bridge("deleteRecipe",{"name":arguments["name"]}))
+    if name=="chrome_bridge_run_recipe":
+        payload={"name":arguments["name"]}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("runRecipe",payload))
     if name=="chrome_bridge_dom_actions":
         payload={"actions":arguments["actions"]}
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
@@ -276,7 +332,7 @@ def main()->None:
         method=message.get("method"); msg_id=message.get("id")
         try:
             if method=="initialize":
-              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.8"}})
+              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.10"}})
             elif method=="notifications/initialized":
                 continue
             elif method=="tools/list":
