@@ -1,5 +1,6 @@
 let currentTabId = null;
 let pollTimer = null;
+let noticeTimer = null;
 
 function el(id) {
   return document.getElementById(id);
@@ -30,6 +31,18 @@ function renderMonitorState(network) {
   el('monitorState').textContent = attached
     ? `Monitoring tab ${network.attachedTabId}`
     : 'Monitor inactive';
+}
+
+function showNotice(text, isError = false) {
+  const node = el('notice');
+  node.textContent = text || '';
+  node.style.color = isError ? 'var(--danger)' : 'var(--accent)';
+  if (noticeTimer) clearTimeout(noticeTimer);
+  if (text) {
+    noticeTimer = setTimeout(() => {
+      node.textContent = '';
+    }, 2200);
+  }
 }
 
 function renderNetwork(network) {
@@ -123,10 +136,27 @@ async function clearMonitor() {
   await refresh();
 }
 
+async function runQuick(action, params = {}, successText = 'Done') {
+  const response = await chrome.runtime.sendMessage({
+    type: 'popup-run-command',
+    action,
+    params,
+  });
+  if (!response?.ok) {
+    showNotice(response?.error || 'Command failed', true);
+    return;
+  }
+  showNotice(successText);
+  await refresh();
+}
+
 el('save').addEventListener('click', saveServerUrl);
 el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);
+el('copyText').addEventListener('click', () => runQuick('copyPageContent', { mode: 'text' }, 'Page text copied'));
+el('copyHtml').addEventListener('click', () => runQuick('copyPageContent', { mode: 'html' }, 'Page HTML copied'));
+el('reloadTab').addEventListener('click', () => runQuick('reload', {}, 'Tab reloaded'));
 
 refresh();
 pollTimer = setInterval(refresh, 1500);

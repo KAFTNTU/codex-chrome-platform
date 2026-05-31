@@ -614,6 +614,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse(clearNetworkLog(message.tabId ?? null));
       return;
     }
+    if (message?.type === 'popup-run-command') {
+      const result = await handleCommand({
+        action: message.action,
+        params: message.params || {},
+      });
+      sendResponse({ ok: true, result });
+      return;
+    }
     sendResponse({ ok: false, error: 'Unknown popup message' });
   })().catch((error) => {
     sendResponse({ ok: false, error: error.message || String(error) });

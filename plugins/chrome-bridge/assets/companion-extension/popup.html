@@ -21,39 +21,39 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      width: 420px;
-      min-height: 620px;
+      width: 360px;
+      min-height: 540px;
       background: var(--bg);
       color: var(--text);
-      font: 13px/1.4 "Segoe UI", sans-serif;
+      font: 12px/1.35 "Segoe UI", sans-serif;
     }
-    .wrap { padding: 12px; display: grid; gap: 10px; }
+    .wrap { padding: 8px; display: grid; gap: 8px; }
     .card {
       background: var(--panel);
       border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px;
+      border-radius: 9px;
+      padding: 8px;
     }
     .title {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
     }
-    .sub { color: var(--muted); font-size: 12px; }
-    .row { display: grid; gap: 6px; margin-top: 8px; }
-    .inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .sub { color: var(--muted); font-size: 11px; }
+    .row { display: grid; gap: 5px; margin-top: 6px; }
+    .inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
     .pill {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 4px 8px;
+      padding: 3px 7px;
       border-radius: 999px;
       background: var(--panel-2);
       border: 1px solid var(--line);
-      font-size: 12px;
+      font-size: 11px;
     }
     .ok { color: var(--accent-2); }
     .bad { color: var(--danger); }
@@ -63,11 +63,12 @@
       background: var(--panel-2);
       color: var(--text);
     }
-    input { width: 100%; padding: 8px 10px; }
+    input { width: 100%; padding: 7px 9px; }
     button {
-      padding: 8px 10px;
+      padding: 7px 9px;
       cursor: pointer;
       transition: background 0.15s ease;
+      font-size: 12px;
     }
     button:hover { background: #27303b; }
     button.primary {
@@ -86,13 +87,13 @@
     }
     .list {
       display: grid;
-      gap: 8px;
-      max-height: 240px;
+      gap: 6px;
+      max-height: 200px;
       overflow: auto;
-      margin-top: 8px;
+      margin-top: 6px;
     }
     .entry {
-      padding: 8px;
+      padding: 7px;
       border-radius: 8px;
       background: var(--panel-2);
       border: 1px solid var(--line);
@@ -117,11 +118,24 @@
     .small { font-size: 11px; }
     .mono { font-family: Consolas, monospace; }
     .empty {
-      padding: 12px;
+      padding: 10px;
       border: 1px dashed var(--line);
       border-radius: 8px;
       color: var(--muted);
       text-align: center;
+    }
+    .tools-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .tools-grid button {
+      padding: 7px 6px;
+    }
+    .notice {
+      min-height: 16px;
+      color: var(--accent);
     }
   </style>
 </head>
@@ -129,7 +143,7 @@
   <div class="wrap">
     <div class="card">
       <div class="title">
-        <span>Chrome Bridge Companion</span>
+        <span>Bridge</span>
         <span id="statusPill" class="pill">...</span>
       </div>
       <div class="row">
@@ -147,6 +161,7 @@
         <div class="sub">Помилка</div>
         <code id="error"></code>
       </div>
+      <div class="row notice" id="notice"></div>
     </div>
 
     <div class="card">
@@ -162,6 +177,15 @@
       </div>
       <div class="row small">
         <span id="monitorState" class="sub">Monitor inactive</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title">Quick tools</div>
+      <div class="tools-grid">
+        <button id="copyText">Copy text</button>
+        <button id="copyHtml">Copy HTML</button>
+        <button id="reloadTab">Reload tab</button>
       </div>
     </div>
 
