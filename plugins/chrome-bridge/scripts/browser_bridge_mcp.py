@@ -1,8 +1,17 @@
 import json, os, sys, urllib.request, urllib.error
+from pathlib import Path
 from typing import Any
 HOST = os.environ.get("CHROME_BRIDGE_HOST", "127.0.0.1")
 PORT = int(os.environ.get("CHROME_BRIDGE_PORT", "17373"))
 BASE_URL = f"http://{HOST}:{PORT}"
+TOKEN = os.environ.get("CHROME_BRIDGE_TOKEN", "")
+if not TOKEN:
+    runtime_path = Path.home() / ".chrome-bridge" / "runtime.json"
+    if runtime_path.exists():
+        try:
+            TOKEN = json.loads(runtime_path.read_text(encoding="utf-8")).get("token", "")
+        except Exception:
+            TOKEN = ""
 TOOLS = [
     {"name":"chrome_bridge_status","description":"Return Chrome Bridge connectivity status and the latest connected client.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_get_active_tab","description":"Get metadata about the active Chrome tab in the connected profile.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
@@ -77,12 +86,18 @@ TOOLS = [
     {"name":"chrome_bridge_reload","description":"Reload the current tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
 ]
 def http_get(path:str)->Any:
-    req=urllib.request.Request(BASE_URL+path,headers={"Content-Type":"application/json"})
+    headers={"Content-Type":"application/json"}
+    if TOKEN: headers["X-Bridge-Token"]=TOKEN
+    req=urllib.request.Request(BASE_URL+path,headers=headers)
     with urllib.request.urlopen(req,timeout=20) as resp:
         return json.loads(resp.read().decode("utf-8"))
 def http_post(path:str,payload:dict[str,Any])->Any:
+    if TOKEN and "token" not in payload:
+        payload["token"]=TOKEN
     data=json.dumps(payload).encode("utf-8")
-    req=urllib.request.Request(BASE_URL+path,data=data,headers={"Content-Type":"application/json"},method="POST")
+    headers={"Content-Type":"application/json"}
+    if TOKEN: headers["X-Bridge-Token"]=TOKEN
+    req=urllib.request.Request(BASE_URL+path,data=data,headers=headers,method="POST")
     with urllib.request.urlopen(req,timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
 def send_response(msg_id:Any,result:Any)->None:

@@ -132,6 +132,7 @@ async function refresh() {
     const state = await chrome.runtime.sendMessage({ type: 'popup-get-state', tabId: currentTabId });
     el('clientId').textContent = state.clientId || '-';
     el('serverUrl').value = state.serverUrl || 'http://127.0.0.1:17373';
+    el('bridgeToken').value = state.bridgeToken || '';
     renderStatus(state.bridgeState);
     renderActiveTab(state.activeTab);
     renderMonitorState(state.network);
@@ -153,6 +154,19 @@ async function saveServerUrl() {
     await chrome.runtime.sendMessage({
       type: 'popup-save-server-url',
       serverUrl: el('serverUrl').value.trim(),
+    });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
+  await refresh();
+}
+
+async function saveToken() {
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'popup-save-token',
+      bridgeToken: el('bridgeToken').value.trim(),
     });
   } catch (error) {
     showNotice(error.message || String(error), true);
@@ -192,6 +206,7 @@ async function clearMonitor() {
 }
 
 el('save').addEventListener('click', saveServerUrl);
+el('saveToken').addEventListener('click', saveToken);
 el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);

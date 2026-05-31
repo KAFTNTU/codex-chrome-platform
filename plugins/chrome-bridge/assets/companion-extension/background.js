@@ -6,7 +6,7 @@ const MAX_CONSOLE_LOG = 120;
 const MAX_SESSION_MEMORY = 80;
 const MAX_RESPONSE_BODY = 200000;
 
-let state = { connected: false, clientId: null, lastError: null, serverUrl: DEFAULT_SERVER };
+let state = { connected: false, clientId: null, lastError: null, serverUrl: DEFAULT_SERVER, bridgeToken: '', mode: 'safe' };
 let commandLog = [];
 let networkState = {
   attachedTabId: null,
@@ -30,11 +30,12 @@ let macroState = {
 let namedRecipes = {};
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'namedRecipes']);
+  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'bridgeToken', 'namedRecipes']);
   state.clientId = stored.clientId || crypto.randomUUID();
   state.serverUrl = stored.serverUrl || DEFAULT_SERVER;
+  state.bridgeToken = stored.bridgeToken || '';
   namedRecipes = stored.namedRecipes || {};
-  await chrome.storage.local.set({ clientId: state.clientId, serverUrl: state.serverUrl });
+  await chrome.storage.local.set({ clientId: state.clientId, serverUrl: state.serverUrl, bridgeToken: state.bridgeToken });
 }
 
 async function persistRecipes() {
@@ -294,15 +295,25 @@ function serializeTab(tab) {
 async function post(path, payload) {
   const response = await fetch(state.serverUrl + path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(state.bridgeToken ? { 'X-Bridge-Token': state.bridgeToken } : {}),
+    },
+    body: JSON.stringify({
+      ...(payload || {}),
+      ...(state.bridgeToken ? { token: state.bridgeToken } : {}),
+    }),
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }
 
 async function get(path) {
-  const response = await fetch(state.serverUrl + path);
+  const separator = path.includes('?') ? '&' : '?';
+  const tokenParam = state.bridgeToken ? `${separator}token=${encodeURIComponent(state.bridgeToken)}` : '';
+  const response = await fetch(state.serverUrl + path + tokenParam, {
+    headers: state.bridgeToken ? { 'X-Bridge-Token': state.bridgeToken } : {},
+  });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }
@@ -2122,6 +2133,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({
         clientId: state.clientId,
         serverUrl: state.serverUrl,
+        bridgeToken: state.bridgeToken,
         bridgeState: state,
         activeTab: await activeTab(),
         commandLog,
@@ -2137,6 +2149,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       state.serverUrl = value || DEFAULT_SERVER;
       await chrome.storage.local.set({ serverUrl: state.serverUrl });
       sendResponse({ ok: true, serverUrl: state.serverUrl });
+      return;
+    }
+    if (message?.type === 'popup-save-token') {
+      state.bridgeToken = String(message.bridgeToken || '').trim();
+      await chrome.storage.local.set({ bridgeToken: state.bridgeToken });
+      sendResponse({ ok: true, bridgeToken: state.bridgeToken });
       return;
     }
     if (message?.type === 'popup-network-attach') {
@@ -2169,9 +2187,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 async function heartbeat() {
   try {
     const tab = await activeTab();
-    await post('/api/register', { clientId: state.clientId, lastTab: tab });
+    const response = await post('/api/register', { clientId: state.clientId, lastTab: tab });
     state.connected = true;
     state.lastError = null;
+    state.mode = response.mode || state.mode;
   } catch (error) {
     state.connected = false;
     state.lastError = error.message;
