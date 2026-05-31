@@ -399,6 +399,37 @@ async function handleCommand(command) {
         }
         return { title: document.title, url: location.href, needle: target, exact, matches };
       }, [params.text || '', !!params.exact, params.maxItems || 25], params.tabId ?? null);
+    case 'clickByText':
+      return await executeInTab((needle, exact, selector) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const target = norm(needle);
+        if (!target) throw new Error('text is required');
+        const isVisible = (el) => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' &&
+            style.display !== 'none' &&
+            rect.width > 0 &&
+            rect.height > 0;
+        };
+        const elements = Array.from(document.querySelectorAll(selector || 'a, button, input, select, textarea, label, summary, [role="button"], [onclick], [contenteditable="true"]'));
+        const candidate = elements.find((el) => {
+          if (!isVisible(el)) return false;
+          const text = norm(el.innerText || el.textContent || el.value || '');
+          if (!text) return false;
+          return exact ? text === target : text.toLowerCase().includes(target.toLowerCase());
+        });
+        if (!candidate) throw new Error(`No visible element found for text: ${target}`);
+        candidate.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        candidate.click();
+        return {
+          clicked: true,
+          text: target,
+          exact: !!exact,
+          tag: candidate.tagName.toLowerCase(),
+          matchedText: norm(candidate.innerText || candidate.textContent || candidate.value || '').slice(0, 200),
+        };
+      }, [params.text || '', !!params.exact, params.selector || null], params.tabId ?? null);
     case 'listFrames':
       return await executeInTab(() => {
         const frames = Array.from(document.querySelectorAll('iframe, frame')).map((frame, index) => ({
@@ -502,6 +533,23 @@ async function handleCommand(command) {
         if (!el) throw new Error(`Selector not found: ${selector}`);
         el.click();
         return { clicked: true, selector };
+      }, [params.selector], params.tabId ?? null);
+    case 'hover':
+      return await executeInTab((selector) => {
+        const el = document.querySelector(selector);
+        if (!el) throw new Error(`Selector not found: ${selector}`);
+        const rect = el.getBoundingClientRect();
+        const eventInit = {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + Math.min(rect.width / 2, Math.max(rect.width - 1, 1)),
+          clientY: rect.top + Math.min(rect.height / 2, Math.max(rect.height - 1, 1)),
+          view: window,
+        };
+        el.dispatchEvent(new MouseEvent('pointerover', eventInit));
+        el.dispatchEvent(new MouseEvent('mouseover', eventInit));
+        el.dispatchEvent(new MouseEvent('mouseenter', eventInit));
+        return { hovered: true, selector, tag: el.tagName.toLowerCase() };
       }, [params.selector], params.tabId ?? null);
     case 'type':
       return await executeInTab((selector, text) => {
@@ -697,6 +745,61 @@ async function handleCommand(command) {
           sessionStorage: mode === 'local' ? undefined : fromStorage(window.sessionStorage),
         };
       }, [params.storage || 'all'], params.tabId ?? null);
+    case 'extractTables':
+      return await executeInTab((maxTables, maxRows) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const tables = Array.from(document.querySelectorAll('table'))
+          .slice(0, maxTables)
+          .map((table, index) => {
+            const rows = Array.from(table.querySelectorAll('tr'));
+            const headers = Array.from(table.querySelectorAll('th'))
+              .slice(0, 40)
+              .map((cell) => norm(cell.innerText || cell.textContent || ''))
+              .filter(Boolean);
+            const bodyRows = rows
+              .slice(0, maxRows)
+              .map((row) => Array.from(row.cells).map((cell) => norm(cell.innerText || cell.textContent || '')).slice(0, 20))
+              .filter((cells) => cells.some(Boolean));
+            return {
+              index,
+              caption: norm(table.caption?.innerText || table.caption?.textContent || ''),
+              headers,
+              rowCount: rows.length,
+              rows: bodyRows,
+            };
+          });
+        return { title: document.title, url: location.href, tables };
+      }, [params.maxTables || 10, params.maxRows || 20], params.tabId ?? null);
+    case 'pageOverview':
+      return await executeInTab(() => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+          .slice(0, 20)
+          .map((el) => ({
+            level: el.tagName.toLowerCase(),
+            text: norm(el.innerText || el.textContent || '').slice(0, 200),
+          }))
+          .filter((item) => item.text);
+        const landmarks = ['header', 'nav', 'main', 'aside', 'footer', '[role="dialog"]', '[role="main"]', '[role="navigation"]']
+          .flatMap((selector) => Array.from(document.querySelectorAll(selector)).map((el) => ({
+            selector,
+            tag: el.tagName.toLowerCase(),
+            text: norm(el.innerText || el.textContent || '').slice(0, 120),
+          })))
+          .slice(0, 20);
+        return {
+          title: document.title,
+          url: location.href,
+          lang: document.documentElement?.lang || null,
+          headingCount: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+          linkCount: document.links.length,
+          formCount: document.forms.length,
+          frameCount: document.querySelectorAll('iframe, frame').length,
+          buttonCount: document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]').length,
+          headings,
+          landmarks,
+        };
+      }, [], params.tabId ?? null);
     case 'getCookies': {
       const url = params.url || await getPageUrl(params.tabId ?? null);
       const cookies = await chrome.cookies.getAll({ url });
