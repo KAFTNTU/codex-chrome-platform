@@ -133,6 +133,7 @@ async function refresh() {
     el('clientId').textContent = state.clientId || '-';
     el('serverUrl').value = state.serverUrl || 'http://127.0.0.1:17373';
     el('bridgeToken').value = state.bridgeToken || '';
+    el('mouseCueEnabled').checked = state.mouseCueEnabled !== false;
     renderStatus(state.bridgeState);
     renderActiveTab(state.activeTab);
     renderMonitorState(state.network);
@@ -175,6 +176,19 @@ async function saveToken() {
   await refresh();
 }
 
+async function saveMouseCueEnabled() {
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'popup-save-mouse-cue',
+      mouseCueEnabled: !!el('mouseCueEnabled').checked,
+    });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
+  await refresh();
+}
+
 async function attachMonitor() {
   try {
     await chrome.runtime.sendMessage({ type: 'popup-network-attach', tabId: currentTabId });
@@ -207,6 +221,7 @@ async function clearMonitor() {
 
 el('save').addEventListener('click', saveServerUrl);
 el('saveToken').addEventListener('click', saveToken);
+el('mouseCueEnabled').addEventListener('change', saveMouseCueEnabled);
 el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);

@@ -6,7 +6,15 @@ const MAX_CONSOLE_LOG = 120;
 const MAX_SESSION_MEMORY = 80;
 const MAX_RESPONSE_BODY = 200000;
 
-let state = { connected: false, clientId: null, lastError: null, serverUrl: DEFAULT_SERVER, bridgeToken: '', mode: 'safe' };
+let state = {
+  connected: false,
+  clientId: null,
+  lastError: null,
+  serverUrl: DEFAULT_SERVER,
+  bridgeToken: '',
+  mode: 'safe',
+  mouseCueEnabled: true,
+};
 let commandLog = [];
 let networkState = {
   attachedTabId: null,
@@ -30,12 +38,18 @@ let macroState = {
 let namedRecipes = {};
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'bridgeToken', 'namedRecipes']);
+  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'bridgeToken', 'namedRecipes', 'mouseCueEnabled']);
   state.clientId = stored.clientId || crypto.randomUUID();
   state.serverUrl = stored.serverUrl || DEFAULT_SERVER;
   state.bridgeToken = stored.bridgeToken || '';
+  state.mouseCueEnabled = stored.mouseCueEnabled !== false;
   namedRecipes = stored.namedRecipes || {};
-  await chrome.storage.local.set({ clientId: state.clientId, serverUrl: state.serverUrl, bridgeToken: state.bridgeToken });
+  await chrome.storage.local.set({
+    clientId: state.clientId,
+    serverUrl: state.serverUrl,
+    bridgeToken: state.bridgeToken,
+    mouseCueEnabled: state.mouseCueEnabled,
+  });
 }
 
 async function persistRecipes() {
@@ -349,6 +363,44 @@ async function runAndRemember(action, func, args = [], tabId = null, detailBuild
     // Ignore memory builder failures.
   }
   return result;
+}
+
+async function showMouseCue(selector, tabId = null, label = 'Agent') {
+  if (!state.mouseCueEnabled || !selector) return { shown: false, disabled: true };
+  return await executeInTab((targetSelector, targetLabel) => {
+    const el = document.querySelector(targetSelector);
+    if (!el) return { shown: false, reason: `Selector not found: ${targetSelector}` };
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const id = '__codex_bridge_mouse_cue__';
+    let cue = document.getElementById(id);
+    if (!cue) {
+      cue = document.createElement('div');
+      cue.id = id;
+      cue.style.position = 'fixed';
+      cue.style.left = '0';
+      cue.style.top = '0';
+      cue.style.width = '20px';
+      cue.style.height = '20px';
+      cue.style.border = '2px solid rgba(255, 120, 120, 0.95)';
+      cue.style.borderRadius = '999px';
+      cue.style.background = 'rgba(255, 120, 120, 0.2)';
+      cue.style.boxShadow = '0 0 0 6px rgba(255, 120, 120, 0.14)';
+      cue.style.zIndex = '2147483647';
+      cue.style.pointerEvents = 'none';
+      cue.style.transition = 'transform 0.18s ease, opacity 0.22s ease';
+      document.documentElement.appendChild(cue);
+    }
+    cue.style.opacity = '1';
+    cue.style.transform = `translate(${Math.round(x - 10)}px, ${Math.round(y - 10)}px)`;
+    cue.setAttribute('title', targetLabel || 'Agent');
+    setTimeout(() => {
+      const stillThere = document.getElementById(id);
+      if (stillThere) stillThere.style.opacity = '0.35';
+    }, 900);
+    return { shown: true, selector: targetSelector, x: Math.round(x), y: Math.round(y) };
+  }, [selector, label], tabId);
 }
 
 async function executeStructuredDomActions(actions, tabId = null) {
@@ -1068,7 +1120,7 @@ async function handleCommand(command) {
         return { title: document.title, url: location.href, needle: target, exact, matches };
       }, [params.text || '', !!params.exact, params.maxItems || 25], params.tabId ?? null);
     case 'clickByText':
-      return await runAndRemember('clickByText', (needle, exact, selector) => {
+      return await runAndRemember('clickByText', (needle, exact, selector, showCue) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
         const target = norm(needle);
         if (!target) throw new Error('text is required');
@@ -1089,6 +1141,34 @@ async function handleCommand(command) {
         });
         if (!candidate) throw new Error(`No visible element found for text: ${target}`);
         candidate.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        if (showCue) {
+          const rect = candidate.getBoundingClientRect();
+          const id = '__codex_bridge_mouse_cue__';
+          let cue = document.getElementById(id);
+          if (!cue) {
+            cue = document.createElement('div');
+            cue.id = id;
+            cue.style.position = 'fixed';
+            cue.style.left = '0';
+            cue.style.top = '0';
+            cue.style.width = '20px';
+            cue.style.height = '20px';
+            cue.style.border = '2px solid rgba(255, 120, 120, 0.95)';
+            cue.style.borderRadius = '999px';
+            cue.style.background = 'rgba(255, 120, 120, 0.2)';
+            cue.style.boxShadow = '0 0 0 6px rgba(255, 120, 120, 0.14)';
+            cue.style.zIndex = '2147483647';
+            cue.style.pointerEvents = 'none';
+            cue.style.transition = 'transform 0.18s ease, opacity 0.22s ease';
+            document.documentElement.appendChild(cue);
+          }
+          cue.style.opacity = '1';
+          cue.style.transform = `translate(${Math.round(rect.left + rect.width / 2 - 10)}px, ${Math.round(rect.top + rect.height / 2 - 10)}px)`;
+          setTimeout(() => {
+            const stillThere = document.getElementById(id);
+            if (stillThere) stillThere.style.opacity = '0.35';
+          }, 900);
+        }
         candidate.click();
         return {
           clicked: true,
@@ -1097,7 +1177,7 @@ async function handleCommand(command) {
           tag: candidate.tagName.toLowerCase(),
           matchedText: norm(candidate.innerText || candidate.textContent || candidate.value || '').slice(0, 200),
         };
-      }, [params.text || '', !!params.exact, params.selector || null], params.tabId ?? null, (result) => ({
+      }, [params.text || '', !!params.exact, params.selector || null, state.mouseCueEnabled], params.tabId ?? null, (result) => ({
         text: result?.matchedText || params.text || '',
       }));
     case 'clickNearestMatch':
@@ -1331,6 +1411,7 @@ async function handleCommand(command) {
         return { title: document.title, url: location.href, kind, items };
       }, [params.kind || 'all', params.maxItems || 200], params.tabId ?? null);
     case 'click':
+      await showMouseCue(params.selector, params.tabId ?? null, 'Click');
       return await runAndRemember('click', (selector) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
@@ -1380,6 +1461,7 @@ async function handleCommand(command) {
         selector: params.selector,
       }));
     case 'humanClick':
+      await showMouseCue(params.selector, params.tabId ?? null, 'Click');
       return await runAndRemember('humanClick', (selector, steps, button) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
@@ -1413,6 +1495,7 @@ async function handleCommand(command) {
         selector: params.selector,
       }));
     case 'doubleClick':
+      await showMouseCue(params.selector, params.tabId ?? null, 'Double click');
       return await runAndRemember('doubleClick', (selector) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
@@ -1433,6 +1516,7 @@ async function handleCommand(command) {
         return { doubleClicked: true, selector };
       }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
     case 'rightClick':
+      await showMouseCue(params.selector, params.tabId ?? null, 'Right click');
       return await runAndRemember('rightClick', (selector) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
@@ -1450,6 +1534,7 @@ async function handleCommand(command) {
         return { rightClicked: true, selector };
       }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
     case 'hover':
+      await showMouseCue(params.selector, params.tabId ?? null, 'Hover');
       return await runAndRemember('hover', (selector) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
@@ -1517,6 +1602,7 @@ async function handleCommand(command) {
         targetSelector: params.targetSelector,
       }));
     case 'type':
+      await showMouseCue(params.selector, params.tabId ?? null, 'Type');
       return await runAndRemember('type', (selector, text) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
@@ -1536,6 +1622,7 @@ async function handleCommand(command) {
         textLength: String(params.text || '').length,
       }));
     case 'pasteText':
+      await showMouseCue(params.selector, params.tabId ?? null, 'Paste');
       return await runAndRemember('pasteText', (selector, text) => {
         const el = document.querySelector(selector);
         if (!el) throw new Error(`Selector not found: ${selector}`);
@@ -2222,6 +2309,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         clientId: state.clientId,
         serverUrl: state.serverUrl,
         bridgeToken: state.bridgeToken,
+        mouseCueEnabled: state.mouseCueEnabled,
         bridgeState: state,
         activeTab: await activeTab(),
         commandLog,
@@ -2243,6 +2331,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       state.bridgeToken = String(message.bridgeToken || '').trim();
       await chrome.storage.local.set({ bridgeToken: state.bridgeToken });
       sendResponse({ ok: true, bridgeToken: state.bridgeToken });
+      return;
+    }
+    if (message?.type === 'popup-save-mouse-cue') {
+      state.mouseCueEnabled = message.mouseCueEnabled !== false;
+      await chrome.storage.local.set({ mouseCueEnabled: state.mouseCueEnabled });
+      sendResponse({ ok: true, mouseCueEnabled: state.mouseCueEnabled });
       return;
     }
     if (message?.type === 'popup-network-attach') {
