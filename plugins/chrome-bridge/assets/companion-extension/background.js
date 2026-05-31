@@ -1,13 +1,102 @@
 const DEFAULT_SERVER = 'http://127.0.0.1:17373';
 const HIGHLIGHT_ID = '__codex_chrome_bridge_highlight__';
+const MAX_COMMAND_LOG = 60;
+const MAX_NETWORK_LOG = 120;
 
 let state = { connected: false, clientId: null, lastError: null, serverUrl: DEFAULT_SERVER };
+let commandLog = [];
+let networkState = {
+  attachedTabId: null,
+  logsByTab: {},
+  requestsByTab: {},
+};
 
 async function loadState() {
   const stored = await chrome.storage.local.get(['clientId', 'serverUrl']);
   state.clientId = stored.clientId || crypto.randomUUID();
   state.serverUrl = stored.serverUrl || DEFAULT_SERVER;
   await chrome.storage.local.set({ clientId: state.clientId, serverUrl: state.serverUrl });
+}
+
+function pushCommandLog(entry) {
+  commandLog = [{
+    at: new Date().toISOString(),
+    ...entry,
+  }, ...commandLog].slice(0, MAX_COMMAND_LOG);
+}
+
+function debuggerTarget(tabId) {
+  return { tabId: Number(tabId) };
+}
+
+function ensureTabBuckets(tabId) {
+  const key = String(tabId);
+  networkState.logsByTab[key] ||= [];
+  networkState.requestsByTab[key] ||= {};
+  return key;
+}
+
+function previewText(value, maxLength = 400) {
+  if (!value) return '';
+  return String(value).replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+function appendNetworkEntry(tabId, entry) {
+  const key = ensureTabBuckets(tabId);
+  networkState.logsByTab[key] = [{
+    at: new Date().toISOString(),
+    ...entry,
+  }, ...networkState.logsByTab[key]].slice(0, MAX_NETWORK_LOG);
+}
+
+async function attachNetworkMonitor(tabId) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  if (networkState.attachedTabId === resolvedTabId) {
+    return { attached: true, tabId: resolvedTabId, alreadyAttached: true };
+  }
+  if (networkState.attachedTabId != null) {
+    await detachNetworkMonitor(networkState.attachedTabId);
+  }
+  await chrome.debugger.attach(debuggerTarget(resolvedTabId), '1.3');
+  await chrome.debugger.sendCommand(debuggerTarget(resolvedTabId), 'Network.enable');
+  ensureTabBuckets(resolvedTabId);
+  networkState.attachedTabId = resolvedTabId;
+  appendNetworkEntry(resolvedTabId, { kind: 'system', message: 'Network monitor attached' });
+  return { attached: true, tabId: resolvedTabId };
+}
+
+async function detachNetworkMonitor(tabId = null) {
+  const resolvedTabId = tabId != null ? Number(tabId) : networkState.attachedTabId;
+  if (resolvedTabId == null) return { detached: true, tabId: null, alreadyDetached: true };
+  try {
+    await chrome.debugger.detach(debuggerTarget(resolvedTabId));
+  } catch {
+    // Ignore detach errors if the tab was closed or already detached.
+  }
+  if (networkState.attachedTabId === resolvedTabId) {
+    appendNetworkEntry(resolvedTabId, { kind: 'system', message: 'Network monitor detached' });
+    networkState.attachedTabId = null;
+  }
+  return { detached: true, tabId: resolvedTabId };
+}
+
+function getNetworkSnapshot(tabId = null) {
+  const resolvedTabId = tabId != null ? Number(tabId) : networkState.attachedTabId;
+  const key = resolvedTabId != null ? String(resolvedTabId) : null;
+  return {
+    attachedTabId: networkState.attachedTabId,
+    tabId: resolvedTabId,
+    logs: key ? (networkState.logsByTab[key] || []) : [],
+  };
+}
+
+function clearNetworkLog(tabId = null) {
+  const resolvedTabId = tabId != null ? Number(tabId) : networkState.attachedTabId;
+  if (resolvedTabId == null) return { cleared: true, tabId: null };
+  const key = ensureTabBuckets(resolvedTabId);
+  networkState.logsByTab[key] = [];
+  networkState.requestsByTab[key] = {};
+  return { cleared: true, tabId: resolvedTabId };
 }
 
 async function queryTabs(query = {}) {
@@ -131,6 +220,10 @@ function normalizeCopyMode(mode) {
 
 async function handleCommand(command) {
   const params = command.params || {};
+  pushCommandLog({
+    action: command.action,
+    paramsPreview: previewText(JSON.stringify(params)),
+  });
   switch (command.action) {
     case 'getActiveTab':
       return await activeTab();
@@ -377,10 +470,156 @@ async function handleCommand(command) {
         htmlLength: extracted.html.length,
       };
     }
+    case 'networkAttach':
+      return await attachNetworkMonitor(params.tabId ?? null);
+    case 'networkDetach':
+      return await detachNetworkMonitor(params.tabId ?? null);
+    case 'networkGetLog':
+      return getNetworkSnapshot(params.tabId ?? null);
+    case 'networkClearLog':
+      return clearNetworkLog(params.tabId ?? null);
     default:
       throw new Error(`Unsupported action: ${command.action}`);
   }
 }
+
+chrome.debugger.onEvent.addListener(async (source, method, params) => {
+  const tabId = source.tabId;
+  if (tabId == null || networkState.attachedTabId !== tabId) return;
+  const key = ensureTabBuckets(tabId);
+  const requestMap = networkState.requestsByTab[key];
+
+  if (method === 'Network.requestWillBeSent') {
+    requestMap[params.requestId] = {
+      requestId: params.requestId,
+      url: params.request?.url,
+      method: params.request?.method,
+      type: params.type,
+      startedAt: Date.now(),
+      requestHeaders: params.request?.headers || {},
+      requestBodyPreview: previewText(params.request?.postData),
+    };
+    appendNetworkEntry(tabId, {
+      kind: 'request',
+      requestId: params.requestId,
+      method: params.request?.method,
+      url: params.request?.url,
+      type: params.type,
+      requestBodyPreview: previewText(params.request?.postData),
+    });
+    return;
+  }
+
+  if (method === 'Network.responseReceived') {
+    const entry = requestMap[params.requestId] || {};
+    entry.status = params.response?.status;
+    entry.statusText = params.response?.statusText;
+    entry.mimeType = params.response?.mimeType;
+    entry.responseHeaders = params.response?.headers || {};
+    entry.responseUrl = params.response?.url;
+    requestMap[params.requestId] = entry;
+    appendNetworkEntry(tabId, {
+      kind: 'response',
+      requestId: params.requestId,
+      status: params.response?.status,
+      statusText: params.response?.statusText,
+      mimeType: params.response?.mimeType,
+      url: params.response?.url,
+    });
+    return;
+  }
+
+  if (method === 'Network.loadingFinished') {
+    const entry = requestMap[params.requestId] || {};
+    const durationMs = entry.startedAt ? Date.now() - entry.startedAt : null;
+    let responseBodyPreview = '';
+    try {
+      const response = await chrome.debugger.sendCommand(debuggerTarget(tabId), 'Network.getResponseBody', {
+        requestId: params.requestId,
+      });
+      if (response?.body) {
+        const rawBody = response.base64Encoded ? atob(response.body) : response.body;
+        responseBodyPreview = previewText(rawBody);
+      }
+    } catch {
+      responseBodyPreview = '';
+    }
+    appendNetworkEntry(tabId, {
+      kind: 'finished',
+      requestId: params.requestId,
+      method: entry.method,
+      status: entry.status,
+      url: entry.responseUrl || entry.url,
+      mimeType: entry.mimeType,
+      durationMs,
+      requestBodyPreview: entry.requestBodyPreview || '',
+      responseBodyPreview,
+    });
+    delete requestMap[params.requestId];
+    return;
+  }
+
+  if (method === 'Network.loadingFailed') {
+    const entry = requestMap[params.requestId] || {};
+    appendNetworkEntry(tabId, {
+      kind: 'failed',
+      requestId: params.requestId,
+      method: entry.method,
+      url: entry.url,
+      errorText: params.errorText,
+      canceled: !!params.canceled,
+    });
+    delete requestMap[params.requestId];
+  }
+});
+
+chrome.debugger.onDetach.addListener((source, reason) => {
+  const tabId = source.tabId;
+  if (tabId == null) return;
+  if (networkState.attachedTabId === tabId) {
+    appendNetworkEntry(tabId, { kind: 'system', message: `Network monitor detached: ${reason}` });
+    networkState.attachedTabId = null;
+  }
+});
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  (async () => {
+    if (message?.type === 'popup-get-state') {
+      sendResponse({
+        clientId: state.clientId,
+        serverUrl: state.serverUrl,
+        bridgeState: state,
+        activeTab: await activeTab(),
+        commandLog,
+        network: getNetworkSnapshot(message.tabId ?? null),
+      });
+      return;
+    }
+    if (message?.type === 'popup-save-server-url') {
+      const value = String(message.serverUrl || '').trim();
+      state.serverUrl = value || DEFAULT_SERVER;
+      await chrome.storage.local.set({ serverUrl: state.serverUrl });
+      sendResponse({ ok: true, serverUrl: state.serverUrl });
+      return;
+    }
+    if (message?.type === 'popup-network-attach') {
+      sendResponse(await attachNetworkMonitor(message.tabId ?? null));
+      return;
+    }
+    if (message?.type === 'popup-network-detach') {
+      sendResponse(await detachNetworkMonitor(message.tabId ?? null));
+      return;
+    }
+    if (message?.type === 'popup-network-clear') {
+      sendResponse(clearNetworkLog(message.tabId ?? null));
+      return;
+    }
+    sendResponse({ ok: false, error: 'Unknown popup message' });
+  })().catch((error) => {
+    sendResponse({ ok: false, error: error.message || String(error) });
+  });
+  return true;
+});
 
 async function heartbeat() {
   try {

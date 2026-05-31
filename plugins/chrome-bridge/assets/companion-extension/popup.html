@@ -4,24 +4,177 @@
   <meta charset="utf-8">
   <title>Chrome Bridge</title>
   <style>
-    body { font-family: Segoe UI, sans-serif; margin: 12px; width: 320px; }
-    .row { margin: 8px 0; }
-    .status { font-weight: 700; }
-    input { width: 100%; box-sizing: border-box; padding: 8px; }
-    button { margin-top: 8px; padding: 8px 10px; }
-    code { font-size: 11px; word-break: break-all; }
+    :root {
+      color-scheme: dark;
+      --bg: #111418;
+      --panel: #171b21;
+      --panel-2: #1e242c;
+      --line: #2a3340;
+      --text: #e8edf4;
+      --muted: #9ba7b6;
+      --accent: #5fb0ff;
+      --accent-2: #84f0b8;
+      --warn: #ffcf5a;
+      --danger: #ff7a7a;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      width: 420px;
+      min-height: 620px;
+      background: var(--bg);
+      color: var(--text);
+      font: 13px/1.4 "Segoe UI", sans-serif;
+    }
+    .wrap { padding: 12px; display: grid; gap: 10px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .sub { color: var(--muted); font-size: 12px; }
+    .row { display: grid; gap: 6px; margin-top: 8px; }
+    .inline { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      font-size: 12px;
+    }
+    .ok { color: var(--accent-2); }
+    .bad { color: var(--danger); }
+    input, button {
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+    }
+    input { width: 100%; padding: 8px 10px; }
+    button {
+      padding: 8px 10px;
+      cursor: pointer;
+      transition: background 0.15s ease;
+    }
+    button:hover { background: #27303b; }
+    button.primary {
+      background: #17324b;
+      border-color: #315f8b;
+    }
+    button.warn {
+      background: #403319;
+      border-color: #6e5623;
+    }
+    code {
+      display: block;
+      font-size: 11px;
+      color: #c8d4e3;
+      word-break: break-all;
+    }
+    .list {
+      display: grid;
+      gap: 8px;
+      max-height: 240px;
+      overflow: auto;
+      margin-top: 8px;
+    }
+    .entry {
+      padding: 8px;
+      border-radius: 8px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+    }
+    .entry-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 4px;
+      font-size: 12px;
+    }
+    .entry-url {
+      color: #d7e6f8;
+      word-break: break-all;
+    }
+    .entry-meta {
+      color: var(--muted);
+      font-size: 11px;
+      display: grid;
+      gap: 2px;
+    }
+    .small { font-size: 11px; }
+    .mono { font-family: Consolas, monospace; }
+    .empty {
+      padding: 12px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      text-align: center;
+    }
   </style>
 </head>
 <body>
-  <div class="row"><strong>Chrome Bridge Companion</strong></div>
-  <div class="row">Статус: <span id="status" class="status">...</span></div>
-  <div class="row">Server URL</div>
-  <div class="row"><input id="serverUrl" /></div>
-  <div class="row"><button id="save">Зберегти</button></div>
-  <div class="row">Client ID</div>
-  <div class="row"><code id="clientId"></code></div>
-  <div class="row">Помилка</div>
-  <div class="row"><code id="error"></code></div>
+  <div class="wrap">
+    <div class="card">
+      <div class="title">
+        <span>Chrome Bridge Companion</span>
+        <span id="statusPill" class="pill">...</span>
+      </div>
+      <div class="row">
+        <div class="sub">Server URL</div>
+        <div class="inline">
+          <input id="serverUrl" />
+          <button id="save" class="primary">Зберегти</button>
+        </div>
+      </div>
+      <div class="row">
+        <div class="sub">Client ID</div>
+        <code id="clientId"></code>
+      </div>
+      <div class="row">
+        <div class="sub">Помилка</div>
+        <code id="error"></code>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title">Активна вкладка</div>
+      <div class="row">
+        <div id="activeTabTitle"></div>
+        <code id="activeTabUrl"></code>
+      </div>
+      <div class="inline">
+        <button id="attachMonitor" class="primary">Start monitor</button>
+        <button id="detachMonitor">Stop monitor</button>
+        <button id="clearMonitor" class="warn">Clear</button>
+      </div>
+      <div class="row small">
+        <span id="monitorState" class="sub">Monitor inactive</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="title">Network</div>
+      <div id="networkList" class="list"></div>
+    </div>
+
+    <div class="card">
+      <div class="title">Bridge commands</div>
+      <div id="commandList" class="list"></div>
+    </div>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

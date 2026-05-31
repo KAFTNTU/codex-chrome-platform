@@ -3,7 +3,7 @@
   "name": "Chrome Bridge Companion",
   "version": "0.2.0",
   "description": "Companion extension for Codex Chrome Bridge.",
-  "permissions": ["tabs", "scripting", "storage", "activeTab", "offscreen", "clipboardWrite"],
+  "permissions": ["tabs", "scripting", "storage", "activeTab", "offscreen", "clipboardWrite", "debugger"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1:17373/*", "http://localhost:17373/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "Chrome Bridge" }
