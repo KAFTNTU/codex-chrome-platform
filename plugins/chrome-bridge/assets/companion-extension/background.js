@@ -179,6 +179,17 @@ async function listTabs(currentWindowOnly = false) {
   return tabs.map(serializeTab);
 }
 
+async function recentTabs(maxItems = 20) {
+  const tabs = await queryTabs({});
+  return tabs
+    .sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))
+    .slice(0, maxItems)
+    .map((tab) => ({
+      ...serializeTab(tab),
+      lastAccessed: tab.lastAccessed || null,
+    }));
+}
+
 async function switchTab(tabId) {
   const tab = await chrome.tabs.get(Number(tabId));
   if (!tab?.id) throw new Error(`Unknown tab: ${tabId}`);
@@ -388,6 +399,72 @@ async function handleCommand(command) {
         }
         return { title: document.title, url: location.href, needle: target, exact, matches };
       }, [params.text || '', !!params.exact, params.maxItems || 25], params.tabId ?? null);
+    case 'listFrames':
+      return await executeInTab(() => {
+        const frames = Array.from(document.querySelectorAll('iframe, frame')).map((frame, index) => ({
+          index,
+          tag: frame.tagName.toLowerCase(),
+          id: frame.id || null,
+          name: frame.getAttribute('name'),
+          src: frame.getAttribute('src'),
+          title: frame.getAttribute('title'),
+        }));
+        return { title: document.title, url: location.href, frames };
+      }, [], params.tabId ?? null);
+    case 'getForms':
+      return await executeInTab((maxForms) => {
+        const forms = Array.from(document.forms)
+          .slice(0, maxForms)
+          .map((form, index) => ({
+            index,
+            id: form.id || null,
+            name: form.getAttribute('name'),
+            action: form.getAttribute('action'),
+            method: form.getAttribute('method') || 'get',
+            fields: Array.from(form.elements).slice(0, 40).map((field) => ({
+              tag: field.tagName.toLowerCase(),
+              type: field.getAttribute('type'),
+              name: field.getAttribute('name'),
+              id: field.id || null,
+              placeholder: field.getAttribute('placeholder'),
+              valuePreview: String(field.value || '').slice(0, 120),
+            })),
+          }));
+        return { title: document.title, url: location.href, forms };
+      }, [params.maxForms || 20], params.tabId ?? null);
+    case 'fillFields':
+      return await executeInTab((entries) => {
+        const results = [];
+        for (const entry of entries) {
+          const selector = entry.selector || null;
+          const text = entry.value ?? '';
+          const checked = entry.checked;
+          const el = selector ? document.querySelector(selector) : null;
+          if (!el) {
+            results.push({ selector, ok: false, error: 'Selector not found' });
+            continue;
+          }
+          try {
+            if (el instanceof HTMLInputElement && (el.type === 'checkbox' || el.type === 'radio') && typeof checked === 'boolean') {
+              el.checked = checked;
+            } else if (el instanceof HTMLSelectElement && entry.selectValue != null) {
+              el.value = entry.selectValue;
+            } else if ('value' in el) {
+              el.value = text;
+            } else if (el.isContentEditable) {
+              el.textContent = text;
+            } else {
+              throw new Error('Element is not fillable');
+            }
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            results.push({ selector, ok: true });
+          } catch (error) {
+            results.push({ selector, ok: false, error: error.message || String(error) });
+          }
+        }
+        return { filled: results };
+      }, [params.entries || []], params.tabId ?? null);
     case 'getElements':
       return await executeInTab((kind, maxItems) => {
         const selectorByKind = {
@@ -625,6 +702,16 @@ async function handleCommand(command) {
       const cookies = await chrome.cookies.getAll({ url });
       return { url, cookies };
     }
+    case 'downloadUrl': {
+      const url = params.url;
+      if (!url) throw new Error('url is required');
+      const downloadId = await chrome.downloads.download({
+        url,
+        filename: params.filename || undefined,
+        saveAs: params.saveAs !== false,
+      });
+      return { ok: true, url, downloadId };
+    }
     case 'runScript':
       return await executeInTab((script) => {
         const serialize = (value) => {
@@ -648,6 +735,8 @@ async function handleCommand(command) {
       return getNetworkSnapshot(params.tabId ?? null);
     case 'networkClearLog':
       return clearNetworkLog(params.tabId ?? null);
+    case 'recentTabs':
+      return { tabs: await recentTabs(params.maxItems || 20) };
     default:
       throw new Error(`Unsupported action: ${command.action}`);
   }

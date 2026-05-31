@@ -7,6 +7,7 @@ TOOLS = [
     {"name":"chrome_bridge_status","description":"Return Chrome Bridge connectivity status and the latest connected client.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_get_active_tab","description":"Get metadata about the active Chrome tab in the connected profile.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_list_tabs","description":"List open Chrome tabs in the connected profile.","inputSchema":{"type":"object","properties":{"currentWindowOnly":{"type":"boolean","description":"When true, only list tabs from the current window."}},"additionalProperties":False}},
+    {"name":"chrome_bridge_recent_tabs","description":"List recently accessed Chrome tabs.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_switch_tab","description":"Activate a Chrome tab by its id.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"required":["tabId"],"additionalProperties":False}},
     {"name":"chrome_bridge_open_tab","description":"Open a new Chrome tab.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"active":{"type":"boolean"}},"additionalProperties":False}},
     {"name":"chrome_bridge_close_tab","description":"Close a Chrome tab by id or the current active tab.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
@@ -14,6 +15,9 @@ TOOLS = [
     {"name":"chrome_bridge_extract_html","description":"Extract page HTML from the active tab.","inputSchema":{"type":"object","properties":{"maxLength":{"type":"integer","description":"Maximum number of HTML characters to return."}},"additionalProperties":False}},
     {"name":"chrome_bridge_extract_visible_dom","description":"Extract a compact list of visible interactive DOM elements from the active tab.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer","description":"Maximum number of visible elements to return."}},"additionalProperties":False}},
     {"name":"chrome_bridge_find_by_text","description":"Find visible page elements by text content.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"}},"required":["text"],"additionalProperties":False}},
+    {"name":"chrome_bridge_list_frames","description":"List iframe/frame elements on the page.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_get_forms","description":"Inspect forms and fields on the page.","inputSchema":{"type":"object","properties":{"maxForms":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_fill_fields","description":"Fill multiple fields by selector in one call.","inputSchema":{"type":"object","properties":{"entries":{"type":"array","items":{"type":"object","properties":{"selector":{"type":"string"},"value":{"type":"string"},"checked":{"type":"boolean"},"selectValue":{"type":"string"}},"required":["selector"],"additionalProperties":False}}},"required":["entries"],"additionalProperties":False}},
     {"name":"chrome_bridge_get_elements","description":"List visible links, buttons, inputs, or all common interactive elements on the active tab.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["all","links","buttons","inputs"]},"maxItems":{"type":"integer","description":"Maximum number of elements to return."}},"additionalProperties":False}},
     {"name":"chrome_bridge_scroll","description":"Scroll the active tab vertically by a number of pixels.","inputSchema":{"type":"object","properties":{"deltaY":{"type":"integer","description":"Pixels to scroll. Positive scrolls down."}},"required":["deltaY"],"additionalProperties":False}},
     {"name":"chrome_bridge_scroll_to_selector","description":"Scroll the page so a CSS selector is brought into view.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
@@ -30,6 +34,7 @@ TOOLS = [
     {"name":"chrome_bridge_copy_selected_text","description":"Copy the current browser text selection to the clipboard.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_get_storage","description":"Read localStorage and/or sessionStorage from the page.","inputSchema":{"type":"object","properties":{"storage":{"type":"string","enum":["local","session","all"]}},"additionalProperties":False}},
     {"name":"chrome_bridge_get_cookies","description":"Read cookies for the current page URL or a provided URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_download_url","description":"Download a file directly through the browser.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"filename":{"type":"string"},"saveAs":{"type":"boolean"}},"required":["url"],"additionalProperties":False}},
     {"name":"chrome_bridge_run_script","description":"Execute custom JavaScript in the page context and return a serialized result.","inputSchema":{"type":"object","properties":{"script":{"type":"string"}},"required":["script"],"additionalProperties":False}},
     {"name":"chrome_bridge_navigate","description":"Navigate the active tab to a URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":False}},
     {"name":"chrome_bridge_back","description":"Navigate the current tab back in history.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
@@ -76,6 +81,10 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
     if name=="chrome_bridge_status": return as_text_content(http_get("/api/status"))
     if name=="chrome_bridge_get_active_tab": return as_text_content(call_bridge("getActiveTab"))
     if name=="chrome_bridge_list_tabs": return as_text_content(call_bridge("listTabs",{"currentWindowOnly":bool(arguments.get("currentWindowOnly",False))}))
+    if name=="chrome_bridge_recent_tabs":
+        payload={}
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        return as_text_content(call_bridge("recentTabs",payload))
     if name=="chrome_bridge_switch_tab": return as_text_content(call_bridge("switchTab",{"tabId":int(arguments["tabId"])}))
     if name=="chrome_bridge_open_tab": return as_text_content(call_bridge("openNewTab",{"url":arguments.get("url","about:blank"),"active":bool(arguments.get("active",True))}))
     if name=="chrome_bridge_close_tab":
@@ -96,6 +105,12 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
         if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
         return as_text_content(call_bridge("findByText",payload))
+    if name=="chrome_bridge_list_frames": return as_text_content(call_bridge("listFrames"))
+    if name=="chrome_bridge_get_forms":
+        payload={}
+        if "maxForms" in arguments: payload["maxForms"]=int(arguments["maxForms"])
+        return as_text_content(call_bridge("getForms",payload))
+    if name=="chrome_bridge_fill_fields": return as_text_content(call_bridge("fillFields",{"entries":arguments["entries"]}))
     if name=="chrome_bridge_get_elements":
         payload={}
         if "kind" in arguments: payload["kind"]=arguments["kind"]
@@ -146,6 +161,11 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         payload={}
         if "url" in arguments: payload["url"]=arguments["url"]
         return as_text_content(call_bridge("getCookies",payload))
+    if name=="chrome_bridge_download_url":
+        payload={"url":arguments["url"]}
+        if "filename" in arguments: payload["filename"]=arguments["filename"]
+        if "saveAs" in arguments: payload["saveAs"]=bool(arguments["saveAs"])
+        return as_text_content(call_bridge("downloadUrl",payload))
     if name=="chrome_bridge_run_script": return as_text_content(call_bridge("runScript",{"script":arguments["script"]}))
     if name=="chrome_bridge_navigate": return as_text_content(call_bridge("navigate",{"url":arguments["url"]}))
     if name=="chrome_bridge_back": return as_text_content(call_bridge("back"))
