@@ -18,6 +18,14 @@ async function loadState() {
   await chrome.storage.local.set({ clientId: state.clientId, serverUrl: state.serverUrl });
 }
 
+async function persistBridgeState() {
+  try {
+    await chrome.storage.local.set({ bridgeState: state });
+  } catch {
+    // Ignore transient storage failures during service worker restarts.
+  }
+}
+
 function pushCommandLog(entry) {
   commandLog = [{
     at: new Date().toISOString(),
@@ -108,6 +116,14 @@ async function activeTab() {
   const tab = tabs[0];
   if (!tab) return null;
   return serializeTab(tab);
+}
+
+async function safeActiveTab() {
+  try {
+    return await activeTab();
+  } catch {
+    return null;
+  }
 }
 
 function serializeTab(tab) {
@@ -639,7 +655,7 @@ async function heartbeat() {
     state.connected = false;
     state.lastError = error.message;
   }
-  await chrome.storage.local.set({ bridgeState: state });
+  await persistBridgeState();
 }
 
 async function pollOnce() {
@@ -655,23 +671,27 @@ async function pollOnce() {
           commandId: payload.command.commandId,
           ok: true,
           data,
-          lastTab: await activeTab(),
+          lastTab: await safeActiveTab(),
         });
       } catch (error) {
-        await post('/api/result', {
-          clientId: state.clientId,
-          commandId: payload.command.commandId,
-          ok: false,
-          error: error.message || String(error),
-          lastTab: await activeTab(),
-        });
+        try {
+          await post('/api/result', {
+            clientId: state.clientId,
+            commandId: payload.command.commandId,
+            ok: false,
+            error: error.message || String(error),
+            lastTab: await safeActiveTab(),
+          });
+        } catch (reportError) {
+          state.lastError = reportError.message || String(reportError);
+        }
       }
     }
   } catch (error) {
     state.connected = false;
     state.lastError = error.message;
   }
-  await chrome.storage.local.set({ bridgeState: state });
+  await persistBridgeState();
 }
 
 async function loop() {
@@ -681,4 +701,8 @@ async function loop() {
   setInterval(pollOnce, 700);
 }
 
-loop();
+loop().catch((error) => {
+  state.connected = false;
+  state.lastError = error.message || String(error);
+  void persistBridgeState();
+});
