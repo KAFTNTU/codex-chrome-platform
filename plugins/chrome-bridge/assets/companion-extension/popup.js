@@ -24,8 +24,6 @@ function renderActiveTab(activeTab) {
   currentTabId = activeTab?.id ?? null;
   el('activeTabTitle').textContent = activeTab?.title || 'Немає активної вкладки';
   el('activeTabUrl').textContent = activeTab?.url || '-';
-  el('activeTabId').textContent = activeTab?.id ?? '-';
-  el('activeWindowId').textContent = activeTab?.windowId ?? '-';
 }
 
 function renderMonitorState(network) {
@@ -50,6 +48,7 @@ function showNotice(text, isError = false) {
 function renderNetwork(network) {
   const list = el('networkList');
   const logs = network?.logs || [];
+  el('networkCount').textContent = String(logs.length);
   if (!logs.length) {
     list.innerHTML = '<div class="empty">Поки що немає мережевих подій</div>';
     return;
@@ -89,6 +88,7 @@ function renderNetwork(network) {
 function renderCommands(commandLog) {
   const list = el('commandList');
   const items = commandLog || [];
+  el('commandCount').textContent = String(items.length);
   if (!items.length) {
     list.innerHTML = '<div class="empty">Поки що немає команд bridge</div>';
     return;
@@ -170,7 +170,6 @@ el('save').addEventListener('click', saveServerUrl);
 el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);
-el('refreshState').addEventListener('click', refresh);
 
 refresh();
 pollTimer = setInterval(refresh, 1500);

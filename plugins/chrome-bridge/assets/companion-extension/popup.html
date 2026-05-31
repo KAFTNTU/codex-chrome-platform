@@ -128,18 +128,6 @@
       min-height: 16px;
       color: var(--accent);
     }
-    .meta-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px;
-      margin-top: 6px;
-    }
-    .meta-chip {
-      padding: 6px 8px;
-      border-radius: 8px;
-      border: 1px solid var(--line);
-      background: var(--panel-2);
-    }
   </style>
 </head>
 <body>
@@ -173,21 +161,10 @@
         <div id="activeTabTitle"></div>
         <code id="activeTabUrl"></code>
       </div>
-      <div class="meta-grid">
-        <div class="meta-chip">
-          <div class="sub">Tab ID</div>
-          <div id="activeTabId" class="mono">-</div>
-        </div>
-        <div class="meta-chip">
-          <div class="sub">Window ID</div>
-          <div id="activeWindowId" class="mono">-</div>
-        </div>
-      </div>
       <div class="inline">
         <button id="attachMonitor" class="primary">Start monitor</button>
         <button id="detachMonitor">Stop monitor</button>
         <button id="clearMonitor" class="warn">Clear</button>
-        <button id="refreshState">Refresh</button>
       </div>
       <div class="row small">
         <span id="monitorState" class="sub">Monitor inactive</span>
@@ -195,12 +172,18 @@
     </div>
 
     <div class="card">
-      <div class="title">Network</div>
+      <div class="title">
+        <span>Network</span>
+        <span id="networkCount" class="pill">0</span>
+      </div>
       <div id="networkList" class="list"></div>
     </div>
 
     <div class="card">
-      <div class="title">Bridge commands</div>
+      <div class="title">
+        <span>Bridge commands</span>
+        <span id="commandCount" class="pill">0</span>
+      </div>
       <div id="commandList" class="list"></div>
     </div>
   </div>
