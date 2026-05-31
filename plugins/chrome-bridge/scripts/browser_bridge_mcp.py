@@ -13,6 +13,7 @@ TOOLS = [
     {"name":"chrome_bridge_extract_text","description":"Extract visible page text from the active tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_extract_html","description":"Extract page HTML from the active tab.","inputSchema":{"type":"object","properties":{"maxLength":{"type":"integer","description":"Maximum number of HTML characters to return."}},"additionalProperties":False}},
     {"name":"chrome_bridge_extract_visible_dom","description":"Extract a compact list of visible interactive DOM elements from the active tab.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer","description":"Maximum number of visible elements to return."}},"additionalProperties":False}},
+    {"name":"chrome_bridge_find_by_text","description":"Find visible page elements by text content.","inputSchema":{"type":"object","properties":{"text":{"type":"string"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"}},"required":["text"],"additionalProperties":False}},
     {"name":"chrome_bridge_get_elements","description":"List visible links, buttons, inputs, or all common interactive elements on the active tab.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["all","links","buttons","inputs"]},"maxItems":{"type":"integer","description":"Maximum number of elements to return."}},"additionalProperties":False}},
     {"name":"chrome_bridge_scroll","description":"Scroll the active tab vertically by a number of pixels.","inputSchema":{"type":"object","properties":{"deltaY":{"type":"integer","description":"Pixels to scroll. Positive scrolls down."}},"required":["deltaY"],"additionalProperties":False}},
     {"name":"chrome_bridge_scroll_to_selector","description":"Scroll the page so a CSS selector is brought into view.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
@@ -23,7 +24,13 @@ TOOLS = [
     {"name":"chrome_bridge_select_option","description":"Select an option in a native <select> element.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"value":{"type":"string"},"label":{"type":"string"},"index":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_highlight_element","description":"Temporarily highlight a CSS selector on the page.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"color":{"type":"string"},"durationMs":{"type":"integer"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_screenshot","description":"Capture a screenshot of the current visible tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_full_page_screenshot","description":"Capture a full-page screenshot of the current tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_copy_page_content","description":"Copy the current page text or HTML to the system clipboard, even when the site blocks normal copy handlers.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["text","html"]},"maxLength":{"type":"integer","description":"Maximum number of characters to copy."}},"additionalProperties":False}},
+    {"name":"chrome_bridge_select_text","description":"Select text on the page using a CSS selector or matching visible text.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"text":{"type":"string"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_copy_selected_text","description":"Copy the current browser text selection to the clipboard.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_get_storage","description":"Read localStorage and/or sessionStorage from the page.","inputSchema":{"type":"object","properties":{"storage":{"type":"string","enum":["local","session","all"]}},"additionalProperties":False}},
+    {"name":"chrome_bridge_get_cookies","description":"Read cookies for the current page URL or a provided URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_run_script","description":"Execute custom JavaScript in the page context and return a serialized result.","inputSchema":{"type":"object","properties":{"script":{"type":"string"}},"required":["script"],"additionalProperties":False}},
     {"name":"chrome_bridge_navigate","description":"Navigate the active tab to a URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":False}},
     {"name":"chrome_bridge_back","description":"Navigate the current tab back in history.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_forward","description":"Navigate the current tab forward in history.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
@@ -84,6 +91,11 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         payload={}
         if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
         return as_text_content(call_bridge("extractVisibleDom",payload))
+    if name=="chrome_bridge_find_by_text":
+        payload={"text":arguments["text"]}
+        if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        return as_text_content(call_bridge("findByText",payload))
     if name=="chrome_bridge_get_elements":
         payload={}
         if "kind" in arguments: payload["kind"]=arguments["kind"]
@@ -114,11 +126,27 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "durationMs" in arguments: payload["durationMs"]=int(arguments["durationMs"])
         return as_text_content(call_bridge("highlightElement",payload))
     if name=="chrome_bridge_screenshot": return as_text_content(call_bridge("screenshot"))
+    if name=="chrome_bridge_full_page_screenshot": return as_text_content(call_bridge("fullPageScreenshot"))
     if name=="chrome_bridge_copy_page_content":
         payload={}
         if "mode" in arguments: payload["mode"]=arguments["mode"]
         if "maxLength" in arguments: payload["maxLength"]=int(arguments["maxLength"])
         return as_text_content(call_bridge("copyPageContent",payload))
+    if name=="chrome_bridge_select_text":
+        payload={}
+        if "selector" in arguments: payload["selector"]=arguments["selector"]
+        if "text" in arguments: payload["text"]=arguments["text"]
+        return as_text_content(call_bridge("selectText",payload))
+    if name=="chrome_bridge_copy_selected_text": return as_text_content(call_bridge("copySelectedText"))
+    if name=="chrome_bridge_get_storage":
+        payload={}
+        if "storage" in arguments: payload["storage"]=arguments["storage"]
+        return as_text_content(call_bridge("getStorage",payload))
+    if name=="chrome_bridge_get_cookies":
+        payload={}
+        if "url" in arguments: payload["url"]=arguments["url"]
+        return as_text_content(call_bridge("getCookies",payload))
+    if name=="chrome_bridge_run_script": return as_text_content(call_bridge("runScript",{"script":arguments["script"]}))
     if name=="chrome_bridge_navigate": return as_text_content(call_bridge("navigate",{"url":arguments["url"]}))
     if name=="chrome_bridge_back": return as_text_content(call_bridge("back"))
     if name=="chrome_bridge_forward": return as_text_content(call_bridge("forward"))

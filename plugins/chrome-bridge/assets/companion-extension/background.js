@@ -212,6 +212,25 @@ async function captureScreenshot(tabId = null) {
   };
 }
 
+async function withDebugger(tabId, fn) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const wasNetworkAttached = networkState.attachedTabId === resolvedTabId;
+  if (!wasNetworkAttached) {
+    await chrome.debugger.attach(debuggerTarget(resolvedTabId), '1.3');
+  }
+  try {
+    return await fn(resolvedTabId);
+  } finally {
+    if (!wasNetworkAttached) {
+      try {
+        await chrome.debugger.detach(debuggerTarget(resolvedTabId));
+      } catch {
+        // Ignore transient detach failures.
+      }
+    }
+  }
+}
+
 async function ensureOffscreenDocument() {
   const url = chrome.runtime.getURL('offscreen.html');
   if (chrome.offscreen?.hasDocument) {
@@ -228,6 +247,12 @@ async function ensureOffscreenDocument() {
 async function writeClipboardText(text) {
   await ensureOffscreenDocument();
   await chrome.runtime.sendMessage({ type: 'clipboard-write-text', text });
+}
+
+async function getPageUrl(tabId = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const tab = await chrome.tabs.get(resolvedTabId);
+  return tab.url || '';
 }
 
 function normalizeCopyMode(mode) {
@@ -326,6 +351,43 @@ async function handleCommand(command) {
           .map(describe);
         return { title: document.title, url: location.href, nodes };
       }, [params.maxItems || 200], params.tabId ?? null);
+    case 'findByText':
+      return await executeInTab((needle, exact, maxItems) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const target = norm(needle);
+        if (!target) return { matches: [] };
+        const isVisible = (el) => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' &&
+            style.display !== 'none' &&
+            rect.width > 0 &&
+            rect.height > 0;
+        };
+        const selectorFor = (el) => {
+          if (el.id) return `#${el.id}`;
+          const cls = Array.from(el.classList || []).slice(0, 2).map((x) => `.${x}`).join('');
+          return `${el.tagName.toLowerCase()}${cls}`;
+        };
+        const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, label, summary, [role], [contenteditable="true"], p, h1, h2, h3, h4, h5, h6, span, div'));
+        const matches = [];
+        for (const el of elements) {
+          if (!isVisible(el)) continue;
+          const text = norm(el.innerText || el.textContent || el.value || '');
+          if (!text) continue;
+          const ok = exact ? text === target : text.toLowerCase().includes(target.toLowerCase());
+          if (!ok) continue;
+          matches.push({
+            tag: el.tagName.toLowerCase(),
+            text: text.slice(0, 200),
+            selector: selectorFor(el),
+            href: el.href || null,
+            role: el.getAttribute('role'),
+          });
+          if (matches.length >= maxItems) break;
+        }
+        return { title: document.title, url: location.href, needle: target, exact, matches };
+      }, [params.text || '', !!params.exact, params.maxItems || 25], params.tabId ?? null);
     case 'getElements':
       return await executeInTab((kind, maxItems) => {
         const selectorByKind = {
@@ -463,6 +525,22 @@ async function handleCommand(command) {
       }, [params.selector, params.color || '#ffcc00', params.durationMs || 2000, HIGHLIGHT_ID], params.tabId ?? null);
     case 'screenshot':
       return await captureScreenshot(params.tabId ?? null);
+    case 'fullPageScreenshot': {
+      const data = await withDebugger(params.tabId ?? null, async (resolvedTabId) => {
+        await chrome.debugger.sendCommand(debuggerTarget(resolvedTabId), 'Page.enable');
+        const shot = await chrome.debugger.sendCommand(debuggerTarget(resolvedTabId), 'Page.captureScreenshot', {
+          format: 'png',
+          fromSurface: true,
+          captureBeyondViewport: true,
+        });
+        return {
+          tab: serializeTab(await chrome.tabs.get(resolvedTabId)),
+          format: 'png',
+          dataUrl: `data:image/png;base64,${shot.data}`,
+        };
+      });
+      return data;
+    }
     case 'copyPageContent': {
       const mode = normalizeCopyMode(params.mode);
       const extracted = await executeInTab((copyMode, maxLength) => {
@@ -486,6 +564,82 @@ async function handleCommand(command) {
         htmlLength: extracted.html.length,
       };
     }
+    case 'selectText':
+      return await executeInTab((selector, textNeedle) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        let el = null;
+        if (selector) {
+          el = document.querySelector(selector);
+        } else if (textNeedle) {
+          const needle = norm(textNeedle).toLowerCase();
+          el = Array.from(document.querySelectorAll('body *')).find((node) => {
+            const text = norm(node.innerText || node.textContent || '');
+            if (!text) return false;
+            const style = window.getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            return style.visibility !== 'hidden' &&
+              style.display !== 'none' &&
+              rect.width > 0 &&
+              rect.height > 0 &&
+              text.toLowerCase().includes(needle);
+          }) || null;
+        }
+        if (!el) throw new Error('No matching element to select text from');
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        selection.addRange(range);
+        const text = selection.toString();
+        return { selected: true, textLength: text.length, text: text.slice(0, 500) };
+      }, [params.selector || null, params.text || null], params.tabId ?? null);
+    case 'copySelectedText': {
+      const selected = await executeInTab(() => {
+        const text = window.getSelection ? window.getSelection().toString() : '';
+        return { text };
+      }, [], params.tabId ?? null);
+      await writeClipboardText(selected.text || '');
+      return { copied: true, textLength: (selected.text || '').length, text: (selected.text || '').slice(0, 500) };
+    }
+    case 'getStorage':
+      return await executeInTab((which) => {
+        const fromStorage = (storage) => {
+          const data = {};
+          for (let i = 0; i < storage.length; i += 1) {
+            const key = storage.key(i);
+            data[key] = storage.getItem(key);
+          }
+          return data;
+        };
+        const mode = which === 'session' ? 'session' : which === 'all' ? 'all' : 'local';
+        return {
+          title: document.title,
+          url: location.href,
+          mode,
+          localStorage: mode === 'session' ? undefined : fromStorage(window.localStorage),
+          sessionStorage: mode === 'local' ? undefined : fromStorage(window.sessionStorage),
+        };
+      }, [params.storage || 'all'], params.tabId ?? null);
+    case 'getCookies': {
+      const url = params.url || await getPageUrl(params.tabId ?? null);
+      const cookies = await chrome.cookies.getAll({ url });
+      return { url, cookies };
+    }
+    case 'runScript':
+      return await executeInTab((script) => {
+        const serialize = (value) => {
+          try {
+            return JSON.parse(JSON.stringify(value));
+          } catch {
+            return String(value);
+          }
+        };
+        const result = (0, eval)(script);
+        return {
+          ok: true,
+          result: serialize(result),
+        };
+      }, [params.script || 'null'], params.tabId ?? null);
     case 'networkAttach':
       return await attachNetworkMonitor(params.tabId ?? null);
     case 'networkDetach':
