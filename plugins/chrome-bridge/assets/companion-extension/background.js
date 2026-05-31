@@ -1211,6 +1211,94 @@ async function handleCommand(command) {
         }
         return { filled: results };
       }, [params.entries || []], params.tabId ?? null);
+    case 'fillLoginForm':
+      return await runAndRemember('fillLoginForm', (username, password, autoSubmit) => {
+        const norm = (value) => String(value || '').toLowerCase();
+        const bySelector = (selector) => document.querySelector(selector);
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        };
+        const candidates = Array.from(document.querySelectorAll('input, textarea')).filter(visible);
+        const findUser = () => {
+          const direct = bySelector('input[type="email"], input[name*="user" i], input[name*="login" i], input[id*="user" i], input[id*="login" i]');
+          if (direct && visible(direct)) return direct;
+          return candidates.find((el) => {
+            const t = norm(el.type);
+            if (!['text', 'email', 'tel', 'search'].includes(t) && t !== '') return false;
+            const hint = `${el.name || ''} ${el.id || ''} ${el.placeholder || ''} ${el.getAttribute('aria-label') || ''}`;
+            return /user|login|email|ім.?я|логін|пошта/i.test(hint);
+          }) || candidates.find((el) => ['text', 'email', 'tel', 'search', ''].includes(norm(el.type))) || null;
+        };
+        const findPass = () => {
+          const direct = bySelector('input[type="password"]');
+          if (direct && visible(direct)) return direct;
+          return candidates.find((el) => /pass|парол/i.test(`${el.name || ''} ${el.id || ''} ${el.placeholder || ''}`)) || null;
+        };
+        const userEl = findUser();
+        const passEl = findPass();
+        if (!userEl) throw new Error('Username field not found');
+        if (!passEl) throw new Error('Password field not found');
+        userEl.focus();
+        userEl.value = String(username ?? '');
+        userEl.dispatchEvent(new Event('input', { bubbles: true }));
+        userEl.dispatchEvent(new Event('change', { bubbles: true }));
+        passEl.focus();
+        passEl.value = String(password ?? '');
+        passEl.dispatchEvent(new Event('input', { bubbles: true }));
+        passEl.dispatchEvent(new Event('change', { bubbles: true }));
+        let submitted = false;
+        if (autoSubmit) {
+          const form = passEl.form || userEl.form || null;
+          const submitBtn = form
+            ? form.querySelector('button[type="submit"], input[type="submit"], button:not([type]), [role="button"]')
+            : document.querySelector('button[type="submit"], input[type="submit"]');
+          if (submitBtn && visible(submitBtn)) {
+            submitBtn.click();
+            submitted = true;
+          } else if (form) {
+            form.requestSubmit ? form.requestSubmit() : form.submit();
+            submitted = true;
+          }
+        }
+        return {
+          ok: true,
+          filled: true,
+          submitted,
+          userSelector: `${userEl.tagName.toLowerCase()}#${userEl.id || ''}.${userEl.className || ''}`.replace(/\.$/, ''),
+          passSelector: `${passEl.tagName.toLowerCase()}#${passEl.id || ''}.${passEl.className || ''}`.replace(/\.$/, ''),
+        };
+      }, [params.username ?? '', params.password ?? '', !!params.autoSubmit], params.tabId ?? null, () => ({
+        autoSubmit: !!params.autoSubmit,
+      }));
+    case 'submitForm':
+      return await runAndRemember('submitForm', (selector) => {
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        };
+        let target = null;
+        if (selector) {
+          target = document.querySelector(selector);
+        } else {
+          target = document.querySelector('button[type="submit"], input[type="submit"], form button:not([type])');
+        }
+        if (target && visible(target)) {
+          target.click();
+          return { submitted: true, method: 'click', selector: selector || null };
+        }
+        const active = document.activeElement;
+        const form = active?.form || document.querySelector('form');
+        if (form) {
+          form.requestSubmit ? form.requestSubmit() : form.submit();
+          return { submitted: true, method: 'formSubmit' };
+        }
+        throw new Error('No submit target found');
+      }, [params.selector || null], params.tabId ?? null);
     case 'getElements':
       return await executeInTab((kind, maxItems) => {
         const selectorByKind = {

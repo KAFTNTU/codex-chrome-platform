@@ -118,6 +118,14 @@ function normalizeActionName(action) {
     navigate_to: 'navigate',
     open_url: 'navigate',
     open_tab: 'openNewTab',
+    fill_login_form: 'fillLoginForm',
+    submit_form: 'submitForm',
+    submit: 'submitForm',
+    upload_file: 'setFileInputFiles',
+    upload_files: 'setFileInputFiles',
+    upload_document: 'setFileInputFiles',
+    upload_photo: 'setFileInputFiles',
+    download_file: 'downloadUrl',
   };
   return map[action] || action;
 }
