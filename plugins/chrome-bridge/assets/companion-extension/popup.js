@@ -24,6 +24,8 @@ function renderActiveTab(activeTab) {
   currentTabId = activeTab?.id ?? null;
   el('activeTabTitle').textContent = activeTab?.title || 'Немає активної вкладки';
   el('activeTabUrl').textContent = activeTab?.url || '-';
+  el('activeTabId').textContent = activeTab?.id ?? '-';
+  el('activeWindowId').textContent = activeTab?.windowId ?? '-';
 }
 
 function renderMonitorState(network) {
@@ -103,50 +105,64 @@ function renderCommands(commandLog) {
 }
 
 async function refresh() {
-  const state = await chrome.runtime.sendMessage({ type: 'popup-get-state', tabId: currentTabId });
-  el('clientId').textContent = state.clientId || '-';
-  el('serverUrl').value = state.serverUrl || 'http://127.0.0.1:17373';
-  renderStatus(state.bridgeState);
-  renderActiveTab(state.activeTab);
-  renderMonitorState(state.network);
-  renderNetwork(state.network);
-  renderCommands(state.commandLog);
+  try {
+    const state = await chrome.runtime.sendMessage({ type: 'popup-get-state', tabId: currentTabId });
+    el('clientId').textContent = state.clientId || '-';
+    el('serverUrl').value = state.serverUrl || 'http://127.0.0.1:17373';
+    renderStatus(state.bridgeState);
+    renderActiveTab(state.activeTab);
+    renderMonitorState(state.network);
+    renderNetwork(state.network);
+    renderCommands(state.commandLog);
+  } catch (error) {
+    renderStatus({ connected: false, lastError: error.message || String(error) });
+    renderMonitorState({ attachedTabId: null, logs: [] });
+    renderNetwork({ logs: [] });
+    renderCommands([]);
+    showNotice('Bridge service worker is restarting', true);
+  }
 }
 
 async function saveServerUrl() {
-  await chrome.runtime.sendMessage({
-    type: 'popup-save-server-url',
-    serverUrl: el('serverUrl').value.trim(),
-  });
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'popup-save-server-url',
+      serverUrl: el('serverUrl').value.trim(),
+    });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
   await refresh();
 }
 
 async function attachMonitor() {
-  await chrome.runtime.sendMessage({ type: 'popup-network-attach', tabId: currentTabId });
+  try {
+    await chrome.runtime.sendMessage({ type: 'popup-network-attach', tabId: currentTabId });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
   await refresh();
 }
 
 async function detachMonitor() {
-  await chrome.runtime.sendMessage({ type: 'popup-network-detach', tabId: currentTabId });
+  try {
+    await chrome.runtime.sendMessage({ type: 'popup-network-detach', tabId: currentTabId });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
   await refresh();
 }
 
 async function clearMonitor() {
-  await chrome.runtime.sendMessage({ type: 'popup-network-clear', tabId: currentTabId });
-  await refresh();
-}
-
-async function runQuick(action, params = {}, successText = 'Done') {
-  const response = await chrome.runtime.sendMessage({
-    type: 'popup-run-command',
-    action,
-    params,
-  });
-  if (!response?.ok) {
-    showNotice(response?.error || 'Command failed', true);
+  try {
+    await chrome.runtime.sendMessage({ type: 'popup-network-clear', tabId: currentTabId });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
     return;
   }
-  showNotice(successText);
   await refresh();
 }
 
@@ -154,9 +170,7 @@ el('save').addEventListener('click', saveServerUrl);
 el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);
-el('copyText').addEventListener('click', () => runQuick('copyPageContent', { mode: 'text' }, 'Page text copied'));
-el('copyHtml').addEventListener('click', () => runQuick('copyPageContent', { mode: 'html' }, 'Page HTML copied'));
-el('reloadTab').addEventListener('click', () => runQuick('reload', {}, 'Tab reloaded'));
+el('refreshState').addEventListener('click', refresh);
 
 refresh();
 pollTimer = setInterval(refresh, 1500);

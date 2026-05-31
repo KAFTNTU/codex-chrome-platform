@@ -124,18 +124,21 @@
       color: var(--muted);
       text-align: center;
     }
-    .tools-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 6px;
-      margin-top: 6px;
-    }
-    .tools-grid button {
-      padding: 7px 6px;
-    }
     .notice {
       min-height: 16px;
       color: var(--accent);
+    }
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .meta-chip {
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
     }
   </style>
 </head>
@@ -170,22 +173,24 @@
         <div id="activeTabTitle"></div>
         <code id="activeTabUrl"></code>
       </div>
+      <div class="meta-grid">
+        <div class="meta-chip">
+          <div class="sub">Tab ID</div>
+          <div id="activeTabId" class="mono">-</div>
+        </div>
+        <div class="meta-chip">
+          <div class="sub">Window ID</div>
+          <div id="activeWindowId" class="mono">-</div>
+        </div>
+      </div>
       <div class="inline">
         <button id="attachMonitor" class="primary">Start monitor</button>
         <button id="detachMonitor">Stop monitor</button>
         <button id="clearMonitor" class="warn">Clear</button>
+        <button id="refreshState">Refresh</button>
       </div>
       <div class="row small">
         <span id="monitorState" class="sub">Monitor inactive</span>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="title">Quick tools</div>
-      <div class="tools-grid">
-        <button id="copyText">Copy text</button>
-        <button id="copyHtml">Copy HTML</button>
-        <button id="reloadTab">Reload tab</button>
       </div>
     </div>
 
