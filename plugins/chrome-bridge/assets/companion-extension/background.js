@@ -225,6 +225,171 @@ async function runAndRemember(action, func, args = [], tabId = null, detailBuild
   return result;
 }
 
+async function executeStructuredDomActions(actions, tabId = null) {
+  return await runAndRemember('domActions', (items) => {
+    const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (el) => {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+    };
+    const findByText = (text, selector) => {
+      const needle = norm(text).toLowerCase();
+      if (!needle) return null;
+      const nodes = Array.from(document.querySelectorAll(selector || 'a, button, input, select, textarea, label, summary, [role="button"], [onclick], [contenteditable="true"], div, span'));
+      return nodes.find((node) => isVisible(node) && norm(node.innerText || node.textContent || node.value || '').toLowerCase().includes(needle)) || null;
+    };
+    const results = [];
+    for (const item of items || []) {
+      const action = item?.action || '';
+      try {
+        if (action === 'clearBlocklyWorkspace') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws) throw new Error('Blockly workspace not found');
+          ws.clear();
+          ws.render && ws.render();
+          results.push({ action, ok: true });
+          continue;
+        }
+        if (action === 'blocklyLoadXml') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws || !window.Blockly || !Blockly.Xml) throw new Error('Blockly XML API not available');
+          ws.clear();
+          const dom = Blockly.Xml.textToDom(String(item.xml || ''));
+          Blockly.Xml.domToWorkspace(dom, ws);
+          ws.cleanUp && ws.cleanUp();
+          ws.render && ws.render();
+          results.push({ action, ok: true, blockCount: ws.getAllBlocks(false).length });
+          continue;
+        }
+        if (action === 'blocklyCreateChain') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          if (!ws) throw new Error('Blockly workspace not found');
+          let previous = null;
+          let first = null;
+          let y = Number(item.y || 60);
+          for (const spec of item.blocks || []) {
+            const block = ws.newBlock(spec.type);
+            block.initSvg && block.initSvg();
+            block.render && block.render();
+            if (Array.isArray(spec.fields)) {
+              for (const field of spec.fields) {
+                if (field?.name && block.getField(field.name)) {
+                  block.setFieldValue(String(field.value), field.name);
+                }
+              }
+            }
+            if (typeof block.moveBy === 'function') {
+              block.moveBy(Number(item.x || 80), y);
+              y += 96;
+            }
+            if (!first) first = block;
+            if (previous?.nextConnection && block.previousConnection) {
+              previous.nextConnection.connect(block.previousConnection);
+            }
+            previous = block;
+          }
+          ws.cleanUp && ws.cleanUp();
+          ws.render && ws.render();
+          results.push({ action, ok: true, blockCount: ws.getAllBlocks(false).length, firstType: first?.type || null });
+          continue;
+        }
+        if (action === 'blocklyListCapabilities') {
+          const ws = window.workspace || (window.Blockly && Blockly.getMainWorkspace && Blockly.getMainWorkspace());
+          const blockTypes = Object.keys((window.Blockly && Blockly.Blocks) || {}).sort();
+          results.push({
+            action,
+            ok: true,
+            workspacePresent: !!ws,
+            blockTypes,
+          });
+          continue;
+        }
+        if (action === 'clickSelector') {
+          const el = document.querySelector(item.selector);
+          if (!el) throw new Error(`Selector not found: ${item.selector}`);
+          el.click();
+          results.push({ action, ok: true, selector: item.selector });
+          continue;
+        }
+        if (action === 'clickText') {
+          const el = findByText(item.text, item.selector);
+          if (!el) throw new Error(`Text match not found: ${item.text}`);
+          el.click();
+          results.push({ action, ok: true, text: item.text });
+          continue;
+        }
+        if (action === 'typeSelector') {
+          const el = document.querySelector(item.selector);
+          if (!el) throw new Error(`Selector not found: ${item.selector}`);
+          el.focus();
+          if ('value' in el) {
+            el.value = String(item.text || '');
+          } else if (el.isContentEditable) {
+            el.textContent = String(item.text || '');
+          } else {
+            throw new Error('Element is not typable');
+          }
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          results.push({ action, ok: true, selector: item.selector, textLength: String(item.text || '').length });
+          continue;
+        }
+        if (action === 'setTextContent') {
+          const el = document.querySelector(item.selector);
+          if (!el) throw new Error(`Selector not found: ${item.selector}`);
+          el.textContent = String(item.text || '');
+          results.push({ action, ok: true, selector: item.selector });
+          continue;
+        }
+        if (action === 'setAttribute') {
+          const el = document.querySelector(item.selector);
+          if (!el) throw new Error(`Selector not found: ${item.selector}`);
+          el.setAttribute(String(item.name || ''), String(item.value || ''));
+          results.push({ action, ok: true, selector: item.selector, name: item.name });
+          continue;
+        }
+        if (action === 'focusSelector') {
+          const el = document.querySelector(item.selector);
+          if (!el) throw new Error(`Selector not found: ${item.selector}`);
+          el.focus();
+          results.push({ action, ok: true, selector: item.selector });
+          continue;
+        }
+        if (action === 'note') {
+          const noteId = item.id || '__codex_note';
+          let note = document.getElementById(noteId);
+          if (!note) {
+            note = document.createElement('div');
+            note.id = noteId;
+            note.style.position = 'fixed';
+            note.style.right = '14px';
+            note.style.bottom = '14px';
+            note.style.zIndex = '999999';
+            note.style.background = 'rgba(37,99,235,.95)';
+            note.style.color = 'white';
+            note.style.padding = '10px 14px';
+            note.style.borderRadius = '12px';
+            note.style.font = '700 13px Segoe UI, sans-serif';
+            note.style.boxShadow = '0 10px 28px rgba(0,0,0,.35)';
+            document.body.appendChild(note);
+          }
+          note.textContent = String(item.text || '');
+          results.push({ action, ok: true, id: noteId });
+          continue;
+        }
+        throw new Error(`Unsupported dom action: ${action}`);
+      } catch (error) {
+        results.push({ action, ok: false, error: error.message || String(error) });
+      }
+    }
+    return { ok: results.every((entry) => entry.ok), results };
+  }, [actions || []], tabId, (result) => ({
+    actionCount: result?.results?.length || 0,
+  }));
+}
+
 async function listTabs(currentWindowOnly = false) {
   const tabs = await queryTabs(currentWindowOnly ? { currentWindow: true } : {});
   return tabs.map(serializeTab);
@@ -1292,6 +1457,8 @@ async function handleCommand(command) {
       });
       return { ok: true, url, downloadId };
     }
+    case 'domActions':
+      return await executeStructuredDomActions(params.actions || [], params.tabId ?? null);
     case 'runScript':
       return await executeInTab((script) => {
         const serialize = (value) => {
@@ -1301,11 +1468,19 @@ async function handleCommand(command) {
             return String(value);
           }
         };
-        const result = (0, eval)(script);
-        return {
-          ok: true,
-          result: serialize(result),
-        };
+        try {
+          const result = (0, eval)(script);
+          return {
+            ok: true,
+            result: serialize(result),
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            error: error?.message || String(error),
+            hint: 'The page blocked eval-style script execution. Use domActions for CSP-safe interactions.',
+          };
+        }
       }, [params.script || 'null'], params.tabId ?? null);
     case 'networkAttach':
       return await attachNetworkMonitor(params.tabId ?? null);

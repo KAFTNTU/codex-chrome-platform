@@ -56,6 +56,7 @@ TOOLS = [
     {"name":"chrome_bridge_clear_session_memory","description":"Clear short-term bridge memory for a tab or for all tabs.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_get_cookies","description":"Read cookies for the current page URL or a provided URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_download_url","description":"Download a file directly through the browser.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"filename":{"type":"string"},"saveAs":{"type":"boolean"}},"required":["url"],"additionalProperties":False}},
+    {"name":"chrome_bridge_dom_actions","description":"Run a CSP-safe structured list of DOM actions such as Blockly block insertion, clicks, typing, notes, and attribute updates.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"},"actions":{"type":"array","items":{"type":"object","properties":{"action":{"type":"string"}},"required":["action"],"additionalProperties":True}}},"required":["actions"],"additionalProperties":False}},
     {"name":"chrome_bridge_run_script","description":"Execute custom JavaScript in the page context and return a serialized result.","inputSchema":{"type":"object","properties":{"script":{"type":"string"}},"required":["script"],"additionalProperties":False}},
     {"name":"chrome_bridge_navigate","description":"Navigate the active tab to a URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":False}},
     {"name":"chrome_bridge_back","description":"Navigate the current tab back in history.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
@@ -258,6 +259,10 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "filename" in arguments: payload["filename"]=arguments["filename"]
         if "saveAs" in arguments: payload["saveAs"]=bool(arguments["saveAs"])
         return as_text_content(call_bridge("downloadUrl",payload))
+    if name=="chrome_bridge_dom_actions":
+        payload={"actions":arguments["actions"]}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("domActions",payload))
     if name=="chrome_bridge_run_script": return as_text_content(call_bridge("runScript",{"script":arguments["script"]}))
     if name=="chrome_bridge_navigate": return as_text_content(call_bridge("navigate",{"url":arguments["url"]}))
     if name=="chrome_bridge_back": return as_text_content(call_bridge("back"))
@@ -271,7 +276,7 @@ def main()->None:
         method=message.get("method"); msg_id=message.get("id")
         try:
             if method=="initialize":
-                send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.7"}})
+              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.8"}})
             elif method=="notifications/initialized":
                 continue
             elif method=="tools/list":
