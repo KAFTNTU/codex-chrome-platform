@@ -7,5 +7,7 @@ contextBridge.exposeInMainWorld('desktopApi', {
   restartBridge: () => ipcRenderer.invoke('desktop:restart-bridge'),
   setMode: (mode) => ipcRenderer.invoke('desktop:set-mode', mode),
   quickAction: (action) => ipcRenderer.invoke('desktop:quick-action', action),
+  navigate: (payload) => ipcRenderer.invoke('desktop:navigate', payload),
+  setConnection: (payload) => ipcRenderer.invoke('desktop:set-connection', payload),
   openPath: (target) => ipcRenderer.invoke('desktop:open-path', target),
 });

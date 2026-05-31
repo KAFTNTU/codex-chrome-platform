@@ -9,64 +9,114 @@
 <body>
   <main class="shell">
     <header class="hero">
-      <h1>Codex Chrome Platform</h1>
-      <p>Desktop launcher for bridge, modes, logs, and fast automation actions.</p>
+      <div>
+        <h1 data-i18n="title">Codex Chrome Platform</h1>
+        <p data-i18n="subtitle">Desktop launcher for bridge, modes, logs, and fast automation actions.</p>
+      </div>
+      <div class="lang-toggle">
+        <button id="langUa" class="lang-btn">UA</button>
+        <button id="langEn" class="lang-btn active">EN</button>
+      </div>
     </header>
 
-    <section class="panel row">
-      <div class="group">
-        <h2>Bridge Controls</h2>
-        <div class="buttons">
-          <button id="startBridge">Start Bridge</button>
-          <button id="stopBridge">Stop Bridge</button>
-          <button id="restartBridge">Restart Bridge</button>
-          <button id="checkState">Refresh Status</button>
+    <section class="panel connection-panel">
+      <h2 data-i18n="connectionTitle">Local Connection</h2>
+      <div class="status-row">
+        <span id="bridgeProcessIndicator" class="indicator offline">Bridge process: unknown</span>
+        <span id="bridgeApiIndicator" class="indicator offline">API: unknown</span>
+      </div>
+      <div class="token-row">
+        <label class="token-label">
+          <span data-i18n="bridgeToken">Bridge token</span>
+          <input id="bridgeTokenInput" type="password" readonly placeholder="Token will appear after bridge start" />
+        </label>
+        <div class="buttons token-buttons">
+          <button id="toggleToken" data-i18n="showToken">Show</button>
+          <button id="copyToken" data-i18n="copyToken">Copy</button>
         </div>
       </div>
-      <div class="group">
-        <h2>Security Modes</h2>
-        <div class="buttons">
-          <button data-mode="safe">Safe</button>
-          <button data-mode="developer">Developer</button>
-          <button data-mode="local_network">Local Network</button>
-        </div>
-        <p class="hint">Switches `/api/mode` through token-auth API.</p>
+      <div class="connection-grid">
+        <label>
+          <span data-i18n="bridgeUrl">Bridge URL</span>
+          <input id="bridgeUrlInput" placeholder="http://127.0.0.1:17373" />
+        </label>
+        <label>
+          <span data-i18n="tokenOverride">Token override (optional)</span>
+          <input id="tokenOverrideInput" placeholder="From runtime.json by default" />
+        </label>
+      </div>
+      <label class="checkbox-row">
+        <input id="autoStartBridgeInput" type="checkbox" checked />
+        <span data-i18n="autoStartBridge">Auto-start Bridge on app launch</span>
+      </label>
+      <div class="buttons">
+        <button id="saveConnection" data-i18n="saveConnection">Save connection</button>
+      </div>
+      <p class="hint" data-i18n="connectionHint">You can keep token empty to use runtime.json token.</p>
+      <div class="connection-grid">
+        <label>
+          <span data-i18n="targetUrl">Target URL</span>
+          <input id="targetUrlInput" placeholder="https://example.com" />
+        </label>
+      </div>
+      <div class="buttons">
+        <button id="openTargetUrl" data-i18n="openTargetUrl">Open URL in active tab</button>
       </div>
     </section>
 
-    <section class="panel row">
-      <div class="group">
-        <h2>Quick Actions</h2>
-        <div class="buttons">
-          <button data-quick="extract_tables">Extract tables</button>
-          <button data-quick="export_tables_xlsx">Export Excel</button>
-          <button data-quick="generate_docx_report">Generate Word report</button>
-          <button data-quick="macro_start_recording">Start macro recording</button>
-          <button data-quick="macro_stop_recording">Stop macro recording</button>
-          <button data-quick="macro_run">Run macro</button>
+    <section class="grid-cards">
+      <article class="panel group">
+        <h2 data-i18n="bridgeControls">Bridge Controls</h2>
+        <div class="buttons stack">
+          <button id="startBridge" data-i18n="startBridge">Start Bridge</button>
+          <button id="stopBridge" data-i18n="stopBridge">Stop Bridge</button>
+          <button id="restartBridge" data-i18n="restartBridge">Restart Bridge</button>
+          <button id="checkState" data-i18n="refreshStatus">Refresh Status</button>
         </div>
-        <p class="hint">Uses `/api/action` and current runtime token.</p>
-      </div>
-      <div class="group">
-        <h2>Open Paths</h2>
-        <div class="buttons">
-          <button data-open="extensions">Open Extensions Page</button>
-          <button data-open="extensionPath">Open Extension Folder</button>
-          <button data-open="runtimePath">Open runtime.json</button>
-          <button data-open="logsPath">Open logs folder</button>
-          <button data-open="outputPath">Open output folder</button>
-          <button data-open="macrosPath">Open macros folder</button>
+      </article>
+
+      <article class="panel group">
+        <h2 data-i18n="securityModes">Security Modes</h2>
+        <p id="currentModeBadge" class="mode-badge">Mode: -</p>
+        <div class="buttons stack">
+          <button data-mode="safe" data-i18n="modeSafe">Safe</button>
+          <button data-mode="developer" data-i18n="modeDeveloper">Developer</button>
+          <button data-mode="local_network" data-i18n="modeLocalNetwork">Local Network</button>
         </div>
-      </div>
+      </article>
+
+      <article class="panel group">
+        <h2 data-i18n="quickActions">Quick Actions</h2>
+        <div class="buttons stack">
+          <button data-quick="extract_tables" data-i18n="qaExtractTables">Extract tables</button>
+          <button data-quick="export_tables_xlsx" data-i18n="qaExportExcel">Export Excel</button>
+          <button data-quick="generate_docx_report" data-i18n="qaWordReport">Generate Word report</button>
+          <button data-quick="macro_start_recording" data-i18n="qaStartMacro">Start macro recording</button>
+          <button data-quick="macro_stop_recording" data-i18n="qaStopMacro">Stop macro recording</button>
+          <button data-quick="macro_run" data-i18n="qaRunMacro">Run macro</button>
+        </div>
+      </article>
+
+      <article class="panel group">
+        <h2 data-i18n="openPaths">Open Paths</h2>
+        <div class="buttons stack">
+          <button data-open="extensions" data-i18n="openExtensions">Open Extensions Page</button>
+          <button data-open="extensionPath" data-i18n="openExtensionFolder">Open Extension Folder</button>
+          <button data-open="runtimePath" data-i18n="openRuntime">Open runtime.json</button>
+          <button data-open="logsPath" data-i18n="openLogs">Open logs folder</button>
+          <button data-open="outputPath" data-i18n="openOutput">Open output folder</button>
+          <button data-open="macrosPath" data-i18n="openMacros">Open macros folder</button>
+        </div>
+      </article>
     </section>
 
     <section class="panel">
-      <h2>Status</h2>
+      <h2 data-i18n="status">Status</h2>
       <pre id="statusBox">Loading...</pre>
     </section>
 
     <section class="panel">
-      <h2>Bridge Log</h2>
+      <h2 data-i18n="bridgeLog">Bridge Log</h2>
       <pre id="logBox">No logs yet.</pre>
     </section>
   </main>

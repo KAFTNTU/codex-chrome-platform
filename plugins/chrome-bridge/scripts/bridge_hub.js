@@ -321,7 +321,7 @@ async function executeLocalApiAction(action, params = {}) {
   if (action === 'macro_run') {
     return await executeRemoteAction('runRecipe', { name: params.name || 'desktop_macro' });
   }
-  return errorPayload('INVALID_PARAMS', `Unsupported local API action: ${action}`);
+  return null;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -408,7 +408,7 @@ const server = http.createServer(async (req, res) => {
       if (!dispatch.ok) return sendJson(res, dispatch.status, dispatch.payload);
 
       try {
-        const localResult = await executeLocalApiAction(requested, body.params || {});
+        const localResult = await executeLocalApiAction(dispatch.action, body.params || {});
         if (localResult && localResult.ok === false && localResult.error) {
           return sendJson(res, 400, localResult);
         }

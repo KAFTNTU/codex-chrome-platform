@@ -115,6 +115,9 @@ function normalizeActionName(action) {
     read_cookies: 'getCookies',
     run_script: 'runScript',
     debugger_attach: 'networkAttach',
+    navigate_to: 'navigate',
+    open_url: 'navigate',
+    open_tab: 'openNewTab',
   };
   return map[action] || action;
 }

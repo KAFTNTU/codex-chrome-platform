@@ -1,20 +1,22 @@
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
-const { spawn } = require('child_process');
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, utilityProcess } = require('electron');
 
 const APP_ROOT = path.resolve(__dirname, '..');
-const BRIDGE_SCRIPT = path.join(APP_ROOT, 'plugins', 'chrome-bridge', 'scripts', 'bridge_hub.js');
+const APP_FS_ROOT = APP_ROOT.endsWith('.asar') ? `${APP_ROOT}.unpacked` : APP_ROOT;
+const BRIDGE_SCRIPT = path.join(APP_FS_ROOT, 'plugins', 'chrome-bridge', 'scripts', 'bridge_hub.js');
 const RUNTIME_PATH = path.join(os.homedir(), '.chrome-bridge', 'runtime.json');
+const LAUNCHER_PATH = path.join(os.homedir(), '.chrome-bridge', 'launcher.json');
 const LOG_DIR = path.join(os.homedir(), '.chrome-bridge', 'logs');
 const OUTPUT_DIR = path.join(os.homedir(), '.chrome-bridge', 'output');
 const MACROS_DIR = path.join(os.homedir(), '.chrome-bridge', 'macros');
-const BRIDGE_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:17373';
+const DEFAULT_BRIDGE_URL = process.env.BRIDGE_URL || 'http://127.0.0.1:17373';
 
 let bridgeProcess = null;
 let mainWindow = null;
 let bridgeLog = [];
+let launcherConfig = { bridgeUrl: DEFAULT_BRIDGE_URL, tokenOverride: '', autoStartBridge: true };
 
 function ensureDirs() {
   fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -41,9 +43,43 @@ function readRuntime() {
   }
 }
 
+function loadLauncherConfig() {
+  try {
+    if (!fs.existsSync(LAUNCHER_PATH)) return { bridgeUrl: DEFAULT_BRIDGE_URL, tokenOverride: '', autoStartBridge: true };
+    return {
+      bridgeUrl: DEFAULT_BRIDGE_URL,
+      tokenOverride: '',
+      autoStartBridge: true,
+      ...JSON.parse(fs.readFileSync(LAUNCHER_PATH, 'utf8')),
+    };
+  } catch {
+    return { bridgeUrl: DEFAULT_BRIDGE_URL, tokenOverride: '', autoStartBridge: true };
+  }
+}
+
+function saveLauncherConfig(nextConfig) {
+  ensureDirs();
+  launcherConfig = {
+    bridgeUrl: DEFAULT_BRIDGE_URL,
+    tokenOverride: '',
+    autoStartBridge: true,
+    ...nextConfig,
+  };
+  fs.writeFileSync(LAUNCHER_PATH, JSON.stringify(launcherConfig, null, 2), 'utf8');
+}
+
+function getBridgeUrl() {
+  return launcherConfig.bridgeUrl || DEFAULT_BRIDGE_URL;
+}
+
+function getBridgeToken() {
+  const runtime = readRuntime();
+  return launcherConfig.tokenOverride || runtime?.token || '';
+}
+
 async function getHealth() {
   try {
-    const res = await fetch(`${BRIDGE_URL}/health`);
+    const res = await fetch(`${getBridgeUrl()}/health`);
     if (!res.ok) return { ok: false, status: res.status };
     return await res.json();
   } catch (error) {
@@ -53,7 +89,7 @@ async function getHealth() {
 
 async function getStatus() {
   try {
-    const res = await fetch(`${BRIDGE_URL}/status`);
+    const res = await fetch(`${getBridgeUrl()}/status`);
     if (!res.ok) return { ok: false, status: res.status };
     return await res.json();
   } catch (error) {
@@ -66,14 +102,17 @@ function startBridge() {
     return { ok: true, alreadyRunning: true };
   }
   ensureDirs();
-  bridgeProcess = spawn(process.execPath, [BRIDGE_SCRIPT], {
-    cwd: APP_ROOT,
-    env: process.env,
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+  bridgeProcess = utilityProcess.fork(BRIDGE_SCRIPT, [], {
+    cwd: APP_FS_ROOT,
+    stdio: 'pipe',
+    serviceName: 'bridge-hub',
   });
-  bridgeProcess.stdout.on('data', (chunk) => pushLog(chunk.toString().trim()));
-  bridgeProcess.stderr.on('data', (chunk) => pushLog(`[stderr] ${chunk.toString().trim()}`));
+  if (bridgeProcess.stdout) {
+    bridgeProcess.stdout.on('data', (chunk) => pushLog(chunk.toString().trim()));
+  }
+  if (bridgeProcess.stderr) {
+    bridgeProcess.stderr.on('data', (chunk) => pushLog(`[stderr] ${chunk.toString().trim()}`));
+  }
   bridgeProcess.on('exit', (code) => {
     pushLog(`Bridge exited with code ${code}`);
     bridgeProcess = null;
@@ -82,12 +121,17 @@ function startBridge() {
   return { ok: true };
 }
 
-function stopBridge() {
-  if (!bridgeProcess) return { ok: true, alreadyStopped: true };
+async function stopBridge() {
+  if (!bridgeProcess) {
+    const health = await getHealth();
+    return { ok: true, alreadyStopped: true, stillReachable: !!health?.ok };
+  }
   bridgeProcess.kill();
   bridgeProcess = null;
   pushLog('Bridge stop requested');
-  return { ok: true };
+  await new Promise((resolve) => setTimeout(resolve, 350));
+  const health = await getHealth();
+  return { ok: true, stopped: true, stillReachable: !!health?.ok };
 }
 
 function createWindow() {
@@ -111,6 +155,7 @@ ipcMain.handle('desktop:get-state', async () => {
   const status = await getStatus();
   return {
     bridgeRunning: !!bridgeProcess,
+    runtimeToken: runtime?.token || '',
     health,
     status,
     runtime: runtime
@@ -121,10 +166,18 @@ ipcMain.handle('desktop:get-state', async () => {
           tokenMasked: runtime.token ? `${runtime.token.slice(0, 4)}...${runtime.token.slice(-4)}` : '',
         }
       : null,
+    launcher: {
+      bridgeUrl: getBridgeUrl(),
+      autoStartBridge: !!launcherConfig.autoStartBridge,
+      tokenOverrideMasked: launcherConfig.tokenOverride
+        ? `${launcherConfig.tokenOverride.slice(0, 4)}...${launcherConfig.tokenOverride.slice(-4)}`
+        : '',
+    },
     paths: {
       appRoot: APP_ROOT,
+      appFsRoot: APP_FS_ROOT,
       runtimePath: RUNTIME_PATH,
-      extensionPath: path.join(APP_ROOT, 'plugins', 'chrome-bridge', 'assets', 'companion-extension'),
+      extensionPath: path.join(APP_FS_ROOT, 'plugins', 'chrome-bridge', 'assets', 'companion-extension'),
       logsPath: LOG_DIR,
       outputPath: OUTPUT_DIR,
       macrosPath: MACROS_DIR,
@@ -133,33 +186,39 @@ ipcMain.handle('desktop:get-state', async () => {
   };
 });
 
-ipcMain.handle('desktop:start-bridge', async () => startBridge());
+ipcMain.handle('desktop:start-bridge', async () => {
+  const health = await getHealth();
+  if (health?.ok && !bridgeProcess) {
+    return { ok: true, alreadyRunning: true, external: true };
+  }
+  return startBridge();
+});
 ipcMain.handle('desktop:stop-bridge', async () => stopBridge());
 ipcMain.handle('desktop:restart-bridge', async () => {
-  stopBridge();
+  await stopBridge();
   return startBridge();
 });
 
 ipcMain.handle('desktop:set-mode', async (_event, mode) => {
-  const runtime = readRuntime();
-  if (!runtime?.token) {
+  const token = getBridgeToken();
+  if (!token) {
     return { ok: false, error: 'Token is missing in runtime.json. Start bridge first.' };
   }
-  const res = await fetch(`${BRIDGE_URL}/api/mode`, {
+  const res = await fetch(`${getBridgeUrl()}/api/mode`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Bridge-Token': runtime.token,
+      'X-Bridge-Token': token,
     },
-    body: JSON.stringify({ mode, token: runtime.token }),
+    body: JSON.stringify({ mode, token }),
   });
   const json = await res.json();
   return json;
 });
 
 ipcMain.handle('desktop:quick-action', async (_event, action) => {
-  const runtime = readRuntime();
-  if (!runtime?.token) {
+  const token = getBridgeToken();
+  if (!token) {
     return { ok: false, error: { code: 'TOKEN_REQUIRED', message: 'Token is missing in runtime.json' } };
   }
   const payloadByAction = {
@@ -172,21 +231,55 @@ ipcMain.handle('desktop:quick-action', async (_event, action) => {
   };
   const body = payloadByAction[action];
   if (!body) return { ok: false, error: { code: 'INVALID_PARAMS', message: `Unknown quick action: ${action}` } };
-  const res = await fetch(`${BRIDGE_URL}/api/action`, {
+  const res = await fetch(`${getBridgeUrl()}/api/action`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Bridge-Token': runtime.token,
+      'X-Bridge-Token': token,
     },
-    body: JSON.stringify({ ...body, token: runtime.token }),
+    body: JSON.stringify({ ...body, token }),
   });
   return await res.json();
+});
+
+ipcMain.handle('desktop:navigate', async (_event, payload) => {
+  const token = getBridgeToken();
+  const url = String(payload?.url || '').trim();
+  if (!token) {
+    return { ok: false, error: { code: 'TOKEN_REQUIRED', message: 'Token is missing in runtime.json' } };
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    return { ok: false, error: { code: 'INVALID_PARAMS', message: 'URL must start with http:// or https://' } };
+  }
+  const res = await fetch(`${getBridgeUrl()}/api/action`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Bridge-Token': token,
+    },
+    body: JSON.stringify({
+      action: 'navigate',
+      params: { url },
+      token,
+    }),
+  });
+  return await res.json();
+});
+
+ipcMain.handle('desktop:set-connection', async (_event, payload) => {
+  const next = {
+    bridgeUrl: String(payload?.bridgeUrl || '').trim() || DEFAULT_BRIDGE_URL,
+    tokenOverride: String(payload?.tokenOverride || '').trim(),
+    autoStartBridge: payload?.autoStartBridge !== false,
+  };
+  saveLauncherConfig(next);
+  return { ok: true, launcher: launcherConfig };
 });
 
 ipcMain.handle('desktop:open-path', async (_event, target) => {
   const map = {
     extensions: 'edge://extensions',
-    extensionPath: path.join(APP_ROOT, 'plugins', 'chrome-bridge', 'assets', 'companion-extension'),
+    extensionPath: path.join(APP_FS_ROOT, 'plugins', 'chrome-bridge', 'assets', 'companion-extension'),
     logsPath: LOG_DIR,
     outputPath: OUTPUT_DIR,
     macrosPath: MACROS_DIR,
@@ -203,6 +296,10 @@ ipcMain.handle('desktop:open-path', async (_event, target) => {
 });
 
 app.whenReady().then(() => {
+  launcherConfig = loadLauncherConfig();
+  if (launcherConfig.autoStartBridge) {
+    startBridge();
+  }
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
