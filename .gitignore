@@ -1,2 +1,10 @@
-__pycache__/
-*.pyc
+node_modules/
+dist/
+temp/
+logs/
+output/
+macros/
+.chrome-bridge/
+*.log
+*.tmp
+plugins/chrome-bridge/scripts/__pycache__/

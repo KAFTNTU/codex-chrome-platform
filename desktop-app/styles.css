@@ -1,0 +1,107 @@
+:root {
+  --bg: #091024;
+  --bg2: #132a53;
+  --panel: rgba(12, 20, 44, 0.78);
+  --text: #e6edff;
+  --muted: #9cb1df;
+  --line: rgba(129, 169, 255, 0.24);
+  --accent: #67c5ff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  font: 500 14px/1.4 "Segoe UI", "Trebuchet MS", sans-serif;
+  background:
+    radial-gradient(circle at 10% 10%, rgba(89, 131, 255, 0.25), transparent 42%),
+    radial-gradient(circle at 80% 0%, rgba(60, 214, 197, 0.2), transparent 36%),
+    linear-gradient(140deg, var(--bg), var(--bg2));
+}
+
+.shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+}
+
+.hero h1 {
+  margin: 0;
+  letter-spacing: 0.4px;
+}
+
+.hero p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--panel);
+  backdrop-filter: blur(5px);
+  padding: 14px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.group h2,
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button {
+  border: 1px solid var(--line);
+  background: #16386d;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #1f4d92;
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+pre {
+  margin: 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(8, 14, 30, 0.78);
+  border: 1px solid var(--line);
+  overflow: auto;
+  max-height: 280px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    padding: 14px;
+  }
+  .row {
+    grid-template-columns: 1fr;
+  }
+}

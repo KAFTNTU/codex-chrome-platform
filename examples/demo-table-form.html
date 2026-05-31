@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Демо: таблиці та форма</title>
+  <style>
+    body { font: 15px/1.4 "Segoe UI", sans-serif; margin: 20px; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+    th, td { border: 1px solid #c9d2e8; padding: 8px; text-align: left; }
+    th { background: #eef4ff; }
+    .grid { display: grid; grid-template-columns: 2fr 1fr 1fr; border: 1px solid #c9d2e8; }
+    .grid [role="row"] { display: contents; }
+    .grid [role="cell"], .grid [role="columnheader"] { padding: 8px; border-bottom: 1px solid #dbe4f7; }
+    .test-block { margin: 16px 0; padding: 10px; background: #f8fbff; border: 1px solid #cddcff; }
+    form { display: grid; gap: 10px; max-width: 520px; margin-top: 16px; }
+    input, textarea, button { padding: 8px; font: inherit; }
+  </style>
+</head>
+<body>
+  <h1>Тестова сторінка bridge</h1>
+  <p>Ця сторінка містить HTML таблицю, div-grid таблицю і форму з кирилицею.</p>
+
+  <table id="price-table">
+    <caption>Прайс товарів</caption>
+    <thead>
+      <tr><th>Назва</th><th>Ціна</th><th>Посилання</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Камера Xiaomi 12T Pro</td><td>2999</td><td><a href="https://example.com/cam">Переглянути</a></td></tr>
+      <tr><td>Дисплей модуль</td><td>4200</td><td><a href="https://example.com/display">Переглянути</a></td></tr>
+    </tbody>
+  </table>
+
+  <div class="grid" role="table" aria-label="Таблиця курсів">
+    <div role="row">
+      <div role="columnheader">Курс</div>
+      <div role="columnheader">Група</div>
+      <div role="columnheader">Бал</div>
+    </div>
+    <div role="row">
+      <div role="cell">Прикладна оптика</div>
+      <div role="cell">ОП-31</div>
+      <div role="cell">92</div>
+    </div>
+    <div role="row">
+      <div role="cell">ТАУ</div>
+      <div role="cell">АУ-22</div>
+      <div role="cell">88</div>
+    </div>
+  </div>
+
+  <div class="test-block">
+    <strong>Тестовий блок:</strong>
+    <button type="button">Натисни мене по тексту</button>
+  </div>
+
+  <form id="feedback-form">
+    <label>Ім'я <input name="name" type="text" placeholder="Ваше ім'я" /></label>
+    <label>Email <input name="email" type="email" placeholder="email@example.com" /></label>
+    <label>Коментар <textarea name="comment" rows="4" placeholder="Введіть коментар"></textarea></label>
+    <button type="submit">Відправити форму</button>
+  </form>
+
+  <script>
+    document.getElementById('feedback-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      alert('Форму зупинено в демо-режимі.');
+    });
+  </script>
+</body>
+</html>

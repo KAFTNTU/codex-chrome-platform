@@ -1,0 +1,42 @@
+{
+  "name": "codex-chrome-platform",
+  "version": "0.3.0",
+  "description": "Local browser automation platform with Chrome Bridge, MCP, Local API, and desktop launcher.",
+  "main": "desktop-app/main.js",
+  "private": true,
+  "scripts": {
+    "dev": "npm run desktop",
+    "start-bridge": "node ./plugins/chrome-bridge/scripts/bridge_hub.js",
+    "desktop": "electron ./desktop-app/main.js",
+    "build:win": "electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "ua.kaftntu.codex.chromeplatform",
+    "productName": "Codex Chrome Platform",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "desktop-app/**/*",
+      "plugins/**/*",
+      "README.md",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "desktop-app/main.js"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  }
+}

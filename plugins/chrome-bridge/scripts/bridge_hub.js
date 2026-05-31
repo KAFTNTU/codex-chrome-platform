@@ -1,6 +1,9 @@
 const http = require('http');
 const { URL } = require('url');
 const { randomUUID } = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const {
   loadRuntime,
   saveRuntime,
@@ -18,6 +21,7 @@ const runtime = loadRuntime();
 const HOST = process.env.CHROME_BRIDGE_HOST || (runtime.localNetworkEnabled ? '0.0.0.0' : '127.0.0.1');
 const clients = new Map();
 const results = new Map();
+const OUTPUT_DIR = path.join(os.homedir(), '.chrome-bridge', 'output');
 
 function now() { return new Date().toISOString(); }
 
@@ -102,6 +106,10 @@ function queueCommand(payload) {
   return { commandId, clientId: targetClient.clientId };
 }
 
+function ensureOutputDir() {
+  fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+}
+
 async function waitForResult(commandId, timeoutMs) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -175,6 +183,145 @@ function dispatchActionRequest(body) {
     action: normalizedAction,
     params: body.params || {},
   };
+}
+
+async function executeRemoteAction(action, params = {}, waitMs = 20000) {
+  const queued = queueCommand({ action, params });
+  const result = await waitForResult(queued.commandId, waitMs);
+  if (!result) {
+    throw Object.assign(new Error('Bridge action timeout'), { bridgeCode: 'TIMEOUT', queued });
+  }
+  if (result.status === 'error') {
+    throw Object.assign(new Error(result.error || 'Remote bridge action failed'), { bridgeCode: 'INTERNAL_ERROR', queued });
+  }
+  return result.data;
+}
+
+function normalizeExtractedTables(rawData) {
+  const tables = Array.isArray(rawData?.tables) ? rawData.tables : [];
+  return {
+    tables: tables.map((table, index) => {
+      const rows = Array.isArray(table.rows) ? table.rows : [];
+      const headers = Array.isArray(table.headers) ? table.headers : [];
+      const columnCount = Math.max(
+        headers.length,
+        ...rows.map((row) => (Array.isArray(row) ? row.length : 0)),
+      );
+      return {
+        id: `table_${index + 1}`,
+        caption: table.caption || '',
+        rows: rows.length,
+        columns: columnCount,
+        headers,
+        preview: rows.slice(0, 5),
+        rawRows: rows,
+      };
+    }),
+  };
+}
+
+function pickTableById(extracted, tableId = 'all') {
+  if (tableId === 'all') return extracted.tables;
+  return extracted.tables.filter((table) => table.id === tableId);
+}
+
+function escapeCsv(value) {
+  const raw = String(value ?? '');
+  if (raw.includes(',') || raw.includes('"') || raw.includes('\n') || raw.includes('\r')) {
+    return `"${raw.replaceAll('"', '""')}"`;
+  }
+  return raw;
+}
+
+function toCsvWithBom(table) {
+  const lines = [];
+  if (Array.isArray(table.headers) && table.headers.length) {
+    lines.push(table.headers.map(escapeCsv).join(','));
+  }
+  for (const row of table.rawRows || []) {
+    lines.push((Array.isArray(row) ? row : []).map(escapeCsv).join(','));
+  }
+  return `\uFEFF${lines.join('\r\n')}`;
+}
+
+async function executeLocalApiAction(action, params = {}) {
+  if (action === 'getActiveTab') {
+    const status = currentStatus();
+    return { ok: true, activeTab: status.activeTab };
+  }
+  if (action === 'extractText') {
+    return await executeRemoteAction('extractText', params);
+  }
+  if (action === 'extractHtml') {
+    return await executeRemoteAction('extractHtml', params);
+  }
+  if (action === 'extractTables') {
+    const raw = await executeRemoteAction('extractTables', params);
+    return { ok: true, ...normalizeExtractedTables(raw) };
+  }
+  if (action === 'screenshot') {
+    return await executeRemoteAction('screenshot', params);
+  }
+  if (action === 'fullPageScreenshot') {
+    return await executeRemoteAction('fullPageScreenshot', params);
+  }
+  if (action === 'click') {
+    return await executeRemoteAction('click', params);
+  }
+  if (action === 'clickByText') {
+    return await executeRemoteAction('clickByText', params);
+  }
+  if (action === 'type') {
+    return await executeRemoteAction('type', params);
+  }
+  if (action === 'pasteText') {
+    return await executeRemoteAction('pasteText', params);
+  }
+  if (action === 'scroll') {
+    return await executeRemoteAction('scroll', params);
+  }
+  if (action === 'getForms') {
+    return await executeRemoteAction('getForms', params);
+  }
+  if (action === 'export_data_csv') {
+    ensureOutputDir();
+    const extractedRaw = await executeRemoteAction('extractTables', {});
+    const extracted = normalizeExtractedTables(extractedRaw);
+    const targetId = params.tableId || 'all';
+    const selected = pickTableById(extracted, targetId);
+    if (!selected.length) {
+      return errorPayload('INVALID_PARAMS', `No table found for tableId=${targetId}`);
+    }
+    const stamp = Date.now();
+    const filePath = path.join(OUTPUT_DIR, selected.length === 1 ? `table_${targetId}_${stamp}.csv` : `tables_${stamp}.csv`);
+    const csvBlocks = selected.map((table) => {
+      const caption = table.caption ? `# ${table.caption}` : `# ${table.id}`;
+      return `${caption}\r\n${toCsvWithBom(table)}`;
+    });
+    fs.writeFileSync(filePath, csvBlocks.join('\r\n\r\n'), 'utf8');
+    return { ok: true, filePath, tableCount: selected.length, encoding: 'utf-8-bom' };
+  }
+  if (action === 'fill_form_preview') {
+    return {
+      ok: true,
+      status: 'preview_only',
+      message: 'fill_form_preview is planned. Current step validates and reserves this API surface.',
+      params,
+    };
+  }
+  if (action === 'fill_form_confirmed') {
+    return errorPayload('CONFIRMATION_REQUIRED', 'fill_form_confirmed requires explicit interactive confirmation flow.');
+  }
+  if (action === 'macro_start_recording') {
+    return await executeRemoteAction('startMacroRecording', params);
+  }
+  if (action === 'macro_stop_recording') {
+    return await executeRemoteAction('stopMacroRecording', params);
+  }
+  if (action === 'macro_run') {
+    return await executeRemoteAction('runRecipe', { name: params.name || 'desktop_macro' });
+  }
+  return errorPayload('INVALID_PARAMS', `Unsupported local API action: ${action}`);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -253,11 +400,24 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && (url.pathname === '/api/command' || url.pathname === '/api/action')) {
       const body = await readBody(req);
+      const requested = body.action;
       const auth = authorize(req, body);
       if (!auth.ok) return sendJson(res, auth.status, auth.payload);
 
       const dispatch = dispatchActionRequest(body);
       if (!dispatch.ok) return sendJson(res, dispatch.status, dispatch.payload);
+
+      try {
+        const localResult = await executeLocalApiAction(requested, body.params || {});
+        if (localResult && localResult.ok === false && localResult.error) {
+          return sendJson(res, 400, localResult);
+        }
+        if (localResult && localResult.ok !== false) {
+          return sendJson(res, 200, localResult);
+        }
+      } catch {
+        // Fall through to command queue for actions that are not handled locally.
+      }
 
       let queued;
       try {
@@ -271,7 +431,7 @@ const server = http.createServer(async (req, res) => {
 
       const waitMs = Number(body.waitMs || 15000);
       const result = await waitForResult(queued.commandId, waitMs);
-      if (!result) return sendJson(res, 202, { ok: true, pending: true, ...queued });
+      if (!result) return sendJson(res, 202, errorPayload('TIMEOUT', 'Action execution timeout', { queued }));
       if (result.status === 'error') {
         return sendJson(res, 500, errorPayload('INTERNAL_ERROR', result.error || 'Bridge action failed', { queued }));
       }

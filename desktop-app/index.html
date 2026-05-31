@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Codex Chrome Platform</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <h1>Codex Chrome Platform</h1>
+      <p>Desktop launcher for bridge, modes, logs, and fast automation actions.</p>
+    </header>
+
+    <section class="panel row">
+      <div class="group">
+        <h2>Bridge Controls</h2>
+        <div class="buttons">
+          <button id="startBridge">Start Bridge</button>
+          <button id="stopBridge">Stop Bridge</button>
+          <button id="restartBridge">Restart Bridge</button>
+          <button id="checkState">Refresh Status</button>
+        </div>
+      </div>
+      <div class="group">
+        <h2>Security Modes</h2>
+        <div class="buttons">
+          <button data-mode="safe">Safe</button>
+          <button data-mode="developer">Developer</button>
+          <button data-mode="local_network">Local Network</button>
+        </div>
+        <p class="hint">Switches `/api/mode` through token-auth API.</p>
+      </div>
+    </section>
+
+    <section class="panel row">
+      <div class="group">
+        <h2>Quick Actions</h2>
+        <div class="buttons">
+          <button data-quick="extract_tables">Extract tables</button>
+          <button data-quick="export_tables_xlsx">Export Excel</button>
+          <button data-quick="generate_docx_report">Generate Word report</button>
+          <button data-quick="macro_start_recording">Start macro recording</button>
+          <button data-quick="macro_stop_recording">Stop macro recording</button>
+          <button data-quick="macro_run">Run macro</button>
+        </div>
+        <p class="hint">Uses `/api/action` and current runtime token.</p>
+      </div>
+      <div class="group">
+        <h2>Open Paths</h2>
+        <div class="buttons">
+          <button data-open="extensions">Open Extensions Page</button>
+          <button data-open="extensionPath">Open Extension Folder</button>
+          <button data-open="runtimePath">Open runtime.json</button>
+          <button data-open="logsPath">Open logs folder</button>
+          <button data-open="outputPath">Open output folder</button>
+          <button data-open="macrosPath">Open macros folder</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Status</h2>
+      <pre id="statusBox">Loading...</pre>
+    </section>
+
+    <section class="panel">
+      <h2>Bridge Log</h2>
+      <pre id="logBox">No logs yet.</pre>
+    </section>
+  </main>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>
