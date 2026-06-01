@@ -384,6 +384,61 @@ async function executeLocalApiAction(action, params = {}) {
       nextStep: 'User must manually confirm and click Submit.',
     };
   }
+  if (action === 'fileUploadAssistantSubmit') {
+    if (runtime.mode === 'safe') {
+      return errorPayload('SAFE_MODE_SUBMIT_BLOCKED', 'Auto-submit is blocked in safe mode.');
+    }
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) {
+      return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found for submit.');
+    }
+    if (!params.confirmSubmit) {
+      return errorPayload('CONFIRMATION_REQUIRED', 'Set confirmSubmit=true for explicit manual authorization.');
+    }
+    const selector = String(params.selector || '').trim();
+    if (!selector) {
+      return errorPayload('INVALID_PARAMS', 'selector is required for assistive submit.');
+    }
+    const expectedHost = String(params.expectedHost || '').trim().toLowerCase();
+    const expectedUrlContains = String(params.expectedUrlContains || '').trim().toLowerCase();
+    let currentHost = '';
+    let currentUrl = '';
+    try {
+      const u = new URL(active.url);
+      currentHost = String(u.hostname || '').toLowerCase();
+      currentUrl = String(active.url || '').toLowerCase();
+    } catch {
+      currentUrl = String(active.url || '').toLowerCase();
+    }
+    if (expectedHost && currentHost !== expectedHost) {
+      return errorPayload('SUBMIT_GUARD_HOST_MISMATCH', `Current host ${currentHost || '-'} does not match expectedHost ${expectedHost}.`);
+    }
+    if (expectedUrlContains && !currentUrl.includes(expectedUrlContains)) {
+      return errorPayload('SUBMIT_GUARD_URL_MISMATCH', `Current URL does not include expectedUrlContains: ${expectedUrlContains}.`);
+    }
+    if (isEducationalUrl(active.url) && !params.userOwnedCompletedWork) {
+      return errorPayload('UPLOAD_POLICY_BLOCK', 'Educational platform submit is allowed only for user-owned completed work.');
+    }
+    const submit = await executeRemoteAction('submitForm', { selector, tabId: params.tabId });
+    appendAssistiveUploadLog({
+      kind: 'assistive_upload_submit',
+      site: active.url,
+      submitSelector: selector,
+      expectedHost,
+      expectedUrlContains,
+      mode: runtime.mode,
+      userOwnedCompletedWork: !!params.userOwnedCompletedWork,
+      manualConfirmation: true,
+    });
+    return {
+      ok: true,
+      assistant: 'File Upload Assistant',
+      submitted: true,
+      selector,
+      site: active.url,
+      result: submit,
+    };
+  }
   if (action === 'getActiveTab') {
     const status = currentStatus();
     return { ok: true, activeTab: status.activeTab };

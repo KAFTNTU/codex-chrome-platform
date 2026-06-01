@@ -151,6 +151,9 @@ function normalizeActionName(action) {
     document_attachment_assistant_attach: 'fileUploadAssistantAttach',
     personal_upload_helper_preview: 'fileUploadAssistantPreview',
     personal_upload_helper_attach: 'fileUploadAssistantAttach',
+    file_upload_assistant_submit: 'fileUploadAssistantSubmit',
+    document_attachment_assistant_submit: 'fileUploadAssistantSubmit',
+    personal_upload_helper_submit: 'fileUploadAssistantSubmit',
     download_file: 'downloadUrl',
     run_action_queue: 'runActionQueue',
   };
