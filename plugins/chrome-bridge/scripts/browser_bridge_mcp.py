@@ -68,6 +68,8 @@ TOOLS = [
     {"name":"chrome_bridge_file_upload_assistant_attach","description":"Attach validated files (no submit) after explicit confirmAttach=true.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"manualSelectedFiles":{"type":"boolean"},"userOwnedCompletedWork":{"type":"boolean"},"confirmAttach":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["files","confirmAttach"],"additionalProperties":False}},
     {"name":"chrome_bridge_file_upload_assistant_submit","description":"Assistive submit with explicit confirmation and strict target guards (selector + optional expected host/url).","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"confirmSubmit":{"type":"boolean"},"expectedHost":{"type":"string"},"expectedUrlContains":{"type":"string"},"userOwnedCompletedWork":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["selector","confirmSubmit"],"additionalProperties":False}},
     {"name":"chrome_bridge_file_upload_assistant_attach_and_submit","description":"Attach and submit user-owned completed file with strict upload/domain/policy checks.","inputSchema":{"type":"object","properties":{"fileName":{"type":"string"},"userOwnedCompletedWork":{"type":"boolean"},"confirmAttach":{"type":"boolean"},"confirmSubmit":{"type":"boolean"},"allowEducationPlatformUpload":{"type":"boolean"},"manualSelectedFiles":{"type":"array","items":{"type":"string"}},"selector":{"type":"string"},"tabId":{"type":"integer"}},"required":["fileName","userOwnedCompletedWork","confirmAttach","confirmSubmit","allowEducationPlatformUpload"],"additionalProperties":False}},
+    {"name":"chrome_bridge_file_upload_assistant_preflight","description":"Create preflight copy and perform technical readiness checks only.","inputSchema":{"type":"object","properties":{"fileName":{"type":"string"},"fileQuery":{"type":"string"},"userOwnedCompletedWork":{"type":"boolean"},"createTempCopy":{"type":"boolean"},"checkOnlyCopy":{"type":"boolean"},"manualSelectedFiles":{"type":"array","items":{"type":"string"}}},"required":["userOwnedCompletedWork"],"additionalProperties":False}},
+    {"name":"chrome_bridge_file_upload_assistant_preflight_attach_and_submit","description":"Run preflight then attach and submit only if safeToAttach and policy checks pass.","inputSchema":{"type":"object","properties":{"fileName":{"type":"string"},"fileQuery":{"type":"string"},"userOwnedCompletedWork":{"type":"boolean"},"confirmAttach":{"type":"boolean"},"confirmSubmit":{"type":"boolean"},"allowEducationPlatformUpload":{"type":"boolean"},"usePreflightCopy":{"type":"boolean"},"manualSelectedFiles":{"type":"array","items":{"type":"string"}},"selector":{"type":"string"},"tabId":{"type":"integer"}},"required":["userOwnedCompletedWork","confirmAttach","confirmSubmit","allowEducationPlatformUpload"],"additionalProperties":False}},
     {"name":"chrome_bridge_universal_file_upload_preflight","description":"Find matching files by fileQuery and run preflight checks with screenshot.","inputSchema":{"type":"object","properties":{"fileQuery":{"type":"string"},"multiple":{"type":"boolean"},"manualSelectedFiles":{"type":"array","items":{"type":"string"}},"selector":{"type":"string"},"tabId":{"type":"integer"}},"required":["fileQuery"],"additionalProperties":False}},
     {"name":"chrome_bridge_universal_file_upload_preview","description":"Alias of universal preflight preview.","inputSchema":{"type":"object","properties":{"fileQuery":{"type":"string"},"multiple":{"type":"boolean"},"manualSelectedFiles":{"type":"array","items":{"type":"string"}},"selector":{"type":"string"},"tabId":{"type":"integer"}},"required":["fileQuery"],"additionalProperties":False}},
     {"name":"chrome_bridge_universal_file_upload_attach","description":"Attach matched allowed files by fileQuery.","inputSchema":{"type":"object","properties":{"fileQuery":{"type":"string"},"multiple":{"type":"boolean"},"manualSelectedFiles":{"type":"array","items":{"type":"string"}},"selector":{"type":"string"},"confirmAttach":{"type":"boolean"},"userOwnedCompletedWork":{"type":"boolean"},"allowEducationPlatformUpload":{"type":"boolean"},"usePreflightCopy":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["fileQuery","confirmAttach"],"additionalProperties":False}},
@@ -324,6 +326,27 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
             if field in arguments: payload[field]=arguments[field]
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
         return as_text_content(call_bridge("fileUploadAssistantAttachAndSubmit",payload))
+    if name=="chrome_bridge_file_upload_assistant_preflight":
+        payload={"userOwnedCompletedWork":bool(arguments.get("userOwnedCompletedWork",False))}
+        for field in ("fileName","fileQuery","createTempCopy","checkOnlyCopy","manualSelectedFiles"):
+            if field in arguments: payload[field]=arguments[field]
+        if "fileQuery" not in payload and "fileName" in payload:
+            payload["fileQuery"]=payload["fileName"]
+        return as_text_content(call_bridge("fileUploadAssistantPreflight",payload))
+    if name=="chrome_bridge_file_upload_assistant_preflight_attach_and_submit":
+        payload={
+            "userOwnedCompletedWork":bool(arguments.get("userOwnedCompletedWork",False)),
+            "confirmAttach":bool(arguments.get("confirmAttach",False)),
+            "confirmSubmit":bool(arguments.get("confirmSubmit",False)),
+            "allowEducationPlatformUpload":bool(arguments.get("allowEducationPlatformUpload",False)),
+            "usePreflightCopy":bool(arguments.get("usePreflightCopy",True)),
+        }
+        for field in ("fileName","fileQuery","manualSelectedFiles","selector"):
+            if field in arguments: payload[field]=arguments[field]
+        if "fileQuery" not in payload and "fileName" in payload:
+            payload["fileQuery"]=payload["fileName"]
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("fileUploadAssistantPreflightAttachAndSubmit",payload))
     if name in ("chrome_bridge_universal_file_upload_preflight","chrome_bridge_universal_file_upload_preview"):
         payload={"fileQuery":arguments["fileQuery"]}
         for field in ("multiple","manualSelectedFiles","selector"):

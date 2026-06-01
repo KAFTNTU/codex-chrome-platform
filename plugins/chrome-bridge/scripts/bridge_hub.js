@@ -1,9 +1,10 @@
 const http = require('http');
 const { URL } = require('url');
-const { randomUUID } = require('crypto');
+const { randomUUID, createHash } = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const zlib = require('zlib');
 const {
   loadRuntime,
   saveRuntime,
@@ -23,6 +24,7 @@ const clients = new Map();
 const results = new Map();
 const OUTPUT_DIR = path.join(os.homedir(), '.chrome-bridge', 'output');
 const LOGS_DIR = path.join(os.homedir(), '.chrome-bridge', 'logs');
+const PREFLIGHT_DIR = path.join(os.homedir(), '.chrome-bridge', 'preflight');
 const ASSISTIVE_UPLOAD_LOG = path.join(LOGS_DIR, 'assistive_upload.log');
 const EDUCATIONAL_HOST_HINTS = ['atutor', 'moodle', 'canvas', 'blackboard', 'school', 'edu.'];
 
@@ -111,6 +113,10 @@ function queueCommand(payload) {
 
 function ensureOutputDir() {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+}
+
+function ensurePreflightDir() {
+  fs.mkdirSync(PREFLIGHT_DIR, { recursive: true });
 }
 
 function ensureLogsDir() {
@@ -343,6 +349,124 @@ function saveDataUrlPng(dataUrl, prefix = 'upload') {
   return filePath;
 }
 
+function sha256File(filePath) {
+  const hash = createHash('sha256');
+  hash.update(fs.readFileSync(filePath));
+  return hash.digest('hex');
+}
+
+function preflightCopyName(filePath) {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+  return `${base}_preflight_${stamp}${ext}`;
+}
+
+function parseZipEntries(zipBuffer) {
+  const sigEOCD = 0x06054b50;
+  const sigCDFH = 0x02014b50;
+  let eocdOffset = -1;
+  for (let i = zipBuffer.length - 22; i >= Math.max(0, zipBuffer.length - 66000); i -= 1) {
+    if (zipBuffer.readUInt32LE(i) === sigEOCD) {
+      eocdOffset = i;
+      break;
+    }
+  }
+  if (eocdOffset < 0) throw new Error('EOCD not found');
+  const totalEntries = zipBuffer.readUInt16LE(eocdOffset + 10);
+  const centralOffset = zipBuffer.readUInt32LE(eocdOffset + 16);
+  const entries = [];
+  let p = centralOffset;
+  for (let i = 0; i < totalEntries; i += 1) {
+    if (zipBuffer.readUInt32LE(p) !== sigCDFH) throw new Error('Central directory entry signature mismatch');
+    const compMethod = zipBuffer.readUInt16LE(p + 10);
+    const compSize = zipBuffer.readUInt32LE(p + 20);
+    const uncompSize = zipBuffer.readUInt32LE(p + 24);
+    const nameLen = zipBuffer.readUInt16LE(p + 28);
+    const extraLen = zipBuffer.readUInt16LE(p + 30);
+    const commentLen = zipBuffer.readUInt16LE(p + 32);
+    const localHeaderOffset = zipBuffer.readUInt32LE(p + 42);
+    const name = zipBuffer.slice(p + 46, p + 46 + nameLen).toString('utf8');
+    entries.push({ name, compMethod, compSize, uncompSize, localHeaderOffset });
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return entries;
+}
+
+function readZipEntryData(zipBuffer, entry) {
+  const sigLFH = 0x04034b50;
+  const p = entry.localHeaderOffset;
+  if (zipBuffer.readUInt32LE(p) !== sigLFH) throw new Error('Local file header signature mismatch');
+  const nameLen = zipBuffer.readUInt16LE(p + 26);
+  const extraLen = zipBuffer.readUInt16LE(p + 28);
+  const dataStart = p + 30 + nameLen + extraLen;
+  const dataEnd = dataStart + entry.compSize;
+  const compData = zipBuffer.slice(dataStart, dataEnd);
+  if (entry.compMethod === 0) return compData;
+  if (entry.compMethod === 8) return zlib.inflateRawSync(compData);
+  throw new Error(`Unsupported ZIP compression method: ${entry.compMethod}`);
+}
+
+function technicalPreflightOnCopy(copyPath, policy) {
+  const result = {
+    safeToAttach: false,
+    checks: {},
+    file: {},
+    typeChecks: {},
+  };
+  const stat = fs.statSync(copyPath);
+  const ext = path.extname(copyPath).toLowerCase();
+  result.file = {
+    path: copyPath,
+    name: path.basename(copyPath),
+    size: stat.size,
+    extension: ext,
+    modifiedAt: stat.mtime.toISOString(),
+  };
+  result.checks.exists = fs.existsSync(copyPath);
+  result.checks.isFile = stat.isFile();
+  result.checks.nonEmpty = stat.size > 0;
+  result.checks.extensionAllowed = policy.allowedExtensions.includes(ext);
+  result.checks.sizeAllowed = stat.size <= (policy.maxFileSizeMb * 1024 * 1024);
+  if (ext === '.pdf') {
+    const b = fs.readFileSync(copyPath);
+    result.typeChecks.pdfHeader = b.slice(0, 4).toString('utf8') === '%PDF';
+    const txt = b.toString('latin1');
+    const m = txt.match(/\/Type\s*\/Page\b/g);
+    result.typeChecks.pageCountApprox = m ? m.length : 0;
+  } else if (ext === '.zip' || ext === '.docx' || ext === '.xlsx') {
+    const b = fs.readFileSync(copyPath);
+    const entries = parseZipEntries(b);
+    result.typeChecks.zipOpenable = entries.length > 0;
+    result.typeChecks.zipEntries = entries.length;
+    result.typeChecks.noPathTraversal = entries.every((e) => !e.name.includes('..\\') && !e.name.includes('../') && !path.isAbsolute(e.name));
+    if (ext === '.docx') {
+      const hasTypes = entries.some((e) => e.name === '[Content_Types].xml');
+      const docEntry = entries.find((e) => e.name === 'word/document.xml');
+      result.typeChecks.hasContentTypes = hasTypes;
+      result.typeChecks.hasWordDocumentXml = !!docEntry;
+      if (docEntry) {
+        const docXml = readZipEntryData(b, docEntry).toString('utf8');
+        result.typeChecks.documentXmlNonEmpty = docXml.trim().length > 0;
+        const plain = docXml.replace(/<[^>]+>/g, ' ');
+        result.typeChecks.textCharCountApprox = plain.replace(/\s+/g, ' ').trim().length;
+      }
+    }
+    if (ext === '.xlsx') {
+      const hasTypes = entries.some((e) => e.name === '[Content_Types].xml');
+      const wbEntry = entries.find((e) => e.name === 'xl/workbook.xml');
+      const sheets = entries.filter((e) => /^xl\/worksheets\/sheet\d+\.xml$/i.test(e.name));
+      result.typeChecks.hasContentTypes = hasTypes;
+      result.typeChecks.hasWorkbookXml = !!wbEntry;
+      result.typeChecks.sheetCount = sheets.length;
+    }
+  }
+  result.safeToAttach = Object.values(result.checks).every(Boolean);
+  return result;
+}
+
 async function waitForResult(commandId, timeoutMs) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -493,6 +617,81 @@ async function executeLocalApiAction(action, params = {}) {
   action = aliasAction;
   if (!params.fileQuery && params.fileName) {
     params.fileQuery = params.fileName;
+  }
+
+  if (action === 'fileUploadAssistantPreflight') {
+    if (!params.userOwnedCompletedWork) {
+      return errorPayload('POLICY_BLOCKED', 'userOwnedCompletedWork=true is required.');
+    }
+    const policy = getUploadPolicy(runtime);
+    const allowedFolders = policy.allowedFolders;
+    const files = scanFilesInFolders(allowedFolders);
+    const manualFiles = Array.isArray(params.manualSelectedFiles) ? params.manualSelectedFiles.map((x) => path.resolve(String(x))) : [];
+    const manualEntries = manualFiles.filter((f) => fs.existsSync(f)).map((f) => {
+      const s = fs.statSync(f);
+      return { path: f, name: path.basename(f), size: s.size, modifiedAt: s.mtime.toISOString(), mtimeMs: s.mtimeMs, folder: path.dirname(f), extension: path.extname(f).toLowerCase() };
+    });
+    const pool = [...files, ...manualEntries];
+    const matched = matchFilesByQuery(pool, params.fileQuery, policy, false);
+    if (matched.status === 'NO_MATCHES') return errorPayload('NO_MATCHES', 'No files matched fileQuery.');
+    if (matched.status === 'MULTIPLE_MATCHES') {
+      return errorPayload('MULTIPLE_MATCHES', 'Multiple files matched. Provide exact file.', {
+        candidates: matched.candidates.map((f) => ({ name: f.name, size: f.size, modifiedAt: f.modifiedAt, folder: f.folder })),
+      });
+    }
+    const selected = matched.candidates[0];
+    if (!selected) return errorPayload('NO_MATCHES', 'No matched file selected.');
+    ensurePreflightDir();
+    const sourcePath = selected.path;
+    const copyPath = path.join(PREFLIGHT_DIR, preflightCopyName(sourcePath));
+    fs.copyFileSync(sourcePath, copyPath);
+    const originalHash = sha256File(sourcePath);
+    const copyHash = sha256File(copyPath);
+    const report = technicalPreflightOnCopy(copyPath, policy);
+    report.checks.pathAllowed = selected.folder ? policy.allowedFolders.some((root) => isWithinFolder(sourcePath, root)) || manualFiles.includes(sourcePath) : false;
+    report.checks.copyCreatedSuccessfully = fs.existsSync(copyPath);
+    report.checks.checksumMatch = originalHash === copyHash;
+    report.safeToAttach = report.safeToAttach && report.checks.pathAllowed && report.checks.copyCreatedSuccessfully && report.checks.checksumMatch;
+    appendAssistiveUploadLog({
+      kind: 'assistive_upload_preflight',
+      fileQuery: params.fileQuery,
+      source: sourcePath,
+      copy: copyPath,
+      safeToAttach: report.safeToAttach,
+    });
+    return {
+      ok: true,
+      assistant: 'File Upload Assistant Preflight',
+      sourceFile: sourcePath,
+      preflightCopy: copyPath,
+      report,
+      logPath: ASSISTIVE_UPLOAD_LOG,
+      note: 'System checks technical readiness only. It does not edit or evaluate educational content.',
+    };
+  }
+
+  if (action === 'fileUploadAssistantPreflightAttachAndSubmit') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    if (isLikelyQuizOrTestContext(active)) return errorPayload('POLICY_BLOCKED', 'Quiz/test contexts are blocked.');
+    const policy = getUploadPolicy(runtime);
+    const domain = domainAllowedByPolicy(runtime, active.url);
+    if (!domain.ok) return errorPayload(domain.code, domain.message);
+    if (runtime.mode === 'safe') {
+      if (!params.userOwnedCompletedWork || !params.confirmAttach || !params.confirmSubmit) {
+        return errorPayload('CONFIRMATION_REQUIRED', 'Safe mode requires userOwnedCompletedWork=true, confirmAttach=true, confirmSubmit=true.');
+      }
+    }
+    const preflight = await executeLocalApiAction('fileUploadAssistantPreflight', params);
+    if (!preflight?.ok) return preflight;
+    if (!preflight.report?.safeToAttach) return errorPayload('POLICY_BLOCKED', 'Preflight report is not safeToAttach.');
+    const fileToUpload = params.usePreflightCopy === false ? preflight.sourceFile : preflight.preflightCopy;
+    return await executeLocalApiAction('universalFileUploadAttachAndSubmit', {
+      ...params,
+      manualSelectedFiles: [fileToUpload],
+      fileQuery: path.basename(fileToUpload),
+      usePreflightCopy: params.usePreflightCopy !== false,
+    });
   }
 
   if (action === 'universalFileUploadPreflight' || action === 'universalFileUploadPreview') {

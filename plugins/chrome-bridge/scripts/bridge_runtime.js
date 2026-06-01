@@ -191,6 +191,8 @@ function normalizeActionName(action) {
     document_attachment_assistant_submit: 'fileUploadAssistantSubmit',
     personal_upload_helper_submit: 'fileUploadAssistantSubmit',
     file_upload_assistant_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
+    file_upload_assistant_preflight: 'fileUploadAssistantPreflight',
+    file_upload_assistant_preflight_attach_and_submit: 'fileUploadAssistantPreflightAttachAndSubmit',
     document_attachment_assistant_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
     personal_upload_helper_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
     universal_file_upload_preflight: 'universalFileUploadPreflight',
