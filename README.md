@@ -1,147 +1,102 @@
 # Codex Chrome Platform
 
-## UA
+Локальна платформа для автоматизації браузера (Chrome/Edge), яка дає змогу керувати реальною вкладкою через `chrome-bridge`.
 
-Цей репозиторій є GitHub-платформою плагінів для Codex. Основний плагін тут зараз це `chrome-bridge` — локальний міст між Codex і реальним браузером `Chrome` або `Microsoft Edge` через companion extension і localhost hub.
+## Що це вміє (людською мовою)
 
-### Що вміє `chrome-bridge`
+Замість "сухого API списку", коротко про практику.
 
-- читати активну вкладку
-- показувати список вкладок
-- перемикати, відкривати і закривати вкладки
-- переходити на URL, робити `back`, `forward`, `reload`
-- діставати текст сторінки, HTML, видимий DOM і базову структуру сторінки
-- шукати елементи за текстом
-- натискати по селектору
-- натискати по тексту
-- натискати по найближчому текстовому збігу
-- підсвічувати елементи
-- наводити курсор, перевіряти dropdown/menu/modal після hover
-- робити більш “людські” дії: `moveCursor`, `humanClick`, `doubleClick`, `rightClick`
-- скролити сторінку грубо і плавно
-- робити `infinite scroll`
-- чекати появи селектора або тексту
-- вводити текст у поля
-- вставляти текст як через paste
-- працювати з `contenteditable`, `Monaco`, `CodeMirror`
-- знаходити і заповнювати форми
-- працювати з `select`
-- читати `iframe` / `frame`
-- працювати з таблицями
-- виділяти текст
-- виділяти текст drag-подібною дією
-- копіювати виділений текст
-- копіювати весь текст або HTML сторінки в буфер
-- читати `cookies`
-- читати `localStorage` і `sessionStorage`
-- запускати власний JavaScript у сторінці
-- робити screenshot видимої області
-- робити full-page screenshot
-- запускати завантаження файлів
-- відкривати системний file picker для `input[type=file]`
-- виконувати `drag-and-drop`
-- пам’ятати коротку історію дій по вкладці через session memory
-- показувати network log через popup розширення
+- Я можу відкрити потрібний курс/сторінку, знайти потрібний блок тексту, перейти по ньому і перевірити, що відкрилась саме потрібна тема.
+- Я можу натиснути кнопку там, де треба, навіть якщо на сторінці є схожі кнопки.
+- Я можу робити "безпечний клік" (`safeClick`) з повторними спробами, центруванням елемента і перевіркою перекриття.
+- Я можу вводити текст, вставляти через буфер, працювати з формами, submit-ити форму, і автозаповнювати логін/пароль.
+- Я можу знімати скрін усієї сторінки або тільки потрібної області (`elementScreenshot`).
+- Я можу читати JS помилки та мережеві події без відкриття DevTools (`getConsoleLog`, `networkGetLog`, `readResponseBody`).
+- Я можу чекати появу тексту (`waitForText` / `wait_until_text`) і не клікати "в сліпу".
+- Я можу працювати зі складними UI: `contenteditable`, Monaco/CodeMirror, Shadow DOM, dropdown/menu після hover.
+- Я можу прокручувати сторінку керовано (вниз/вгору), щоб не залипати внизу.
+- Я можу записувати і відтворювати сценарії (макроси) для повторюваних перевірок.
 
-### Локальний запуск
+## Архітектура
 
-1. Запусти localhost hub:
+- `plugins/chrome-bridge/scripts/bridge_hub.js`  
+  Локальний HTTP hub (`/health`, `/status`, `/api/action`), токен-автентифікація, маршрутизація команд.
+- `plugins/chrome-bridge/scripts/bridge_runtime.js`  
+  Режими безпеки, токен, normalizer назв команд (`snake_case` -> `camelCase`).
+- `plugins/chrome-bridge/assets/companion-extension/`  
+  Розширення-компаньйон (service worker + popup UI), виконує дії у вкладці.
+- `desktop-app/`  
+  Electron-лаунчер для запуску/зупинки моста і швидких дій.
+
+## Режими безпеки
+
+- `safe` (за замовчуванням): блокує ризикові дії (`cookies`, `runScript`, debugger-команди).
+- `developer`: відкриває розширені дії для тестування/налагодження.
+- `local_network`: опціонально для LAN, тільки з токеном.
+
+Токен зберігається у: `%USERPROFILE%\\.chrome-bridge\\runtime.json`
+
+## Швидкий старт
+
+### 1) Встановлення
 
 ```powershell
-node .\plugins\chrome-bridge\scripts\bridge_hub.js
+npm install
 ```
 
-2. Відкрий у `Chrome` або `Edge` сторінку розширень:
-   - `chrome://extensions`
-   - або `edge://extensions`
-3. Увімкни `Developer mode`
-4. Натисни `Load unpacked`
-5. Вибери папку:
-
-```text
-plugins/chrome-bridge/assets/companion-extension
-```
-
-6. Відкрий popup розширення і перевір, що статус `Connected`
-7. Після зміни файлів розширення натискай `Reload` на картці розширення
-
-### Додавання в Codex
-
-Додай цей репозиторій у Codex як plugin platform.
-
-- Source: `yourname/codex-chrome-platform`
-- Branch: `main`
-- Optional paths: порожньо
-
-## EN
-
-This repository is a GitHub plugin platform for Codex. The main plugin at the moment is `chrome-bridge` — a local bridge between Codex and a real `Chrome` or `Microsoft Edge` browser through a companion extension and a localhost hub.
-
-### What `chrome-bridge` can do
-
-- read the active tab
-- list tabs
-- switch, open, and close tabs
-- navigate to URLs, go `back`, `forward`, and `reload`
-- extract page text, HTML, visible DOM summaries, and page structure
-- find elements by visible text
-- click by selector
-- click by text
-- click the nearest text match
-- highlight elements
-- hover elements and inspect menus, dropdowns, and modals after hover
-- perform more human-like actions: `moveCursor`, `humanClick`, `doubleClick`, `rightClick`
-- scroll in large steps or smooth steps
-- run `infinite scroll`
-- wait for a selector or visible text
-- type into fields
-- paste text like a user paste action
-- work with `contenteditable`, `Monaco`, and `CodeMirror`
-- inspect and fill forms
-- work with native `select` controls
-- inspect `iframe` / `frame`
-- extract table data
-- select text
-- select text with a drag-like action
-- copy the current selection
-- copy all page text or HTML to the system clipboard
-- read `cookies`
-- read `localStorage` and `sessionStorage`
-- run custom JavaScript in the page
-- capture visible screenshots
-- capture full-page screenshots
-- trigger browser downloads
-- open the system file picker for `input[type=file]`
-- perform `drag-and-drop`
-- keep short-lived per-tab session memory of recent actions
-- show a network log in the extension popup
-
-### Local setup
-
-1. Start the localhost hub:
+### 2) Запуск моста
 
 ```powershell
-node .\plugins\chrome-bridge\scripts\bridge_hub.js
+npm run start-bridge
 ```
 
-2. Open extensions in `Chrome` or `Edge`:
-   - `chrome://extensions`
-   - or `edge://extensions`
-3. Enable `Developer mode`
-4. Click `Load unpacked`
-5. Select:
+### 3) Підключення розширення
 
-```text
-plugins/chrome-bridge/assets/companion-extension
+1. Відкрити `edge://extensions` або `chrome://extensions`
+2. Увімкнути `Developer mode`
+3. `Load unpacked`
+4. Вибрати папку `plugins/chrome-bridge/assets/companion-extension`
+
+### 4) Перевірка, що все працює
+
+```powershell
+curl http://127.0.0.1:17373/health
 ```
 
-6. Open the extension popup and confirm the status is `Connected`
-7. After editing extension files, click `Reload` on the extension card
+## Приклади API дій
 
-### Add to Codex
+```bash
+curl -X POST http://127.0.0.1:17373/api/action \
+  -H "Content-Type: application/json" \
+  -H "X-Bridge-Token: YOUR_TOKEN" \
+  -d "{\"action\":\"navigate\",\"params\":{\"url\":\"https://example.com\"},\"token\":\"YOUR_TOKEN\"}"
+```
 
-Add this repository to Codex as a plugin platform.
+```bash
+curl -X POST http://127.0.0.1:17373/api/action \
+  -H "Content-Type: application/json" \
+  -H "X-Bridge-Token: YOUR_TOKEN" \
+  -d "{\"action\":\"safe_click\",\"params\":{\"selector\":\"button[type='submit']\",\"maxAttempts\":3},\"token\":\"YOUR_TOKEN\"}"
+```
 
-- Source: `yourname/codex-chrome-platform`
-- Branch: `main`
-- Optional paths: leave empty
+```bash
+curl -X POST http://127.0.0.1:17373/api/action \
+  -H "Content-Type: application/json" \
+  -H "X-Bridge-Token: YOUR_TOKEN" \
+  -d "{\"action\":\"element_screenshot\",\"params\":{\"selector\":\".result-card\"},\"token\":\"YOUR_TOKEN\"}"
+```
+
+## Для розробника тестів
+
+Це підходить для:
+
+- smoke/regression перевірок у реальному браузері;
+- повторюваних E2E сценаріїв через макроси;
+- швидкого дебагу UI через console/network логи;
+- перевірок React SPA, де важливо чекати стан, а не просто "sleep".
+
+## Privacy
+
+- За замовчуванням дані залишаються локально.
+- Команди захищені токеном.
+- Без явного вмикання `local_network` нічого не слухає LAN.

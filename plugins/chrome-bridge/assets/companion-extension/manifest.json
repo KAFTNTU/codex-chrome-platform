@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bridge Companion",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Companion extension for Codex Bridge.",
   "permissions": ["tabs", "scripting", "storage", "activeTab", "offscreen", "clipboardWrite", "debugger", "cookies", "downloads"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1:17373/*", "http://localhost:17373/*"],

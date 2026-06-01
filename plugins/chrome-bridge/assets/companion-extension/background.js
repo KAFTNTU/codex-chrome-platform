@@ -403,6 +403,96 @@ async function showMouseCue(selector, tabId = null, label = 'Agent') {
   }, [selector, label], tabId);
 }
 
+async function safeClickWithRetries(selector, options = {}, tabId = null) {
+  return await executeInTab(async (targetSelector, opts) => {
+    const queryAllDeep = (selectorQuery) => {
+      const results = [];
+      const roots = [document];
+      while (roots.length) {
+        const root = roots.shift();
+        if (root.querySelectorAll) {
+          results.push(...root.querySelectorAll(selectorQuery));
+        }
+        const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+        for (const node of nodes) {
+          if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+      }
+      return results;
+    };
+    const visible = (el) => {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const maxAttempts = Math.max(1, Number(opts.maxAttempts || 3));
+    const settleMs = Math.max(40, Number(opts.settleMs || 90));
+    const allowForce = opts.allowForce === true;
+    const preferHumanEvents = opts.preferHumanEvents !== false;
+
+    const candidate = queryAllDeep(targetSelector)[0] || null;
+    if (!candidate) throw new Error(`Selector not found: ${targetSelector}`);
+    if (!visible(candidate)) throw new Error(`Element not visible: ${targetSelector}`);
+    const clickOnce = (node, x, y) => {
+      const eventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1, view: window };
+      if (preferHumanEvents) {
+        node.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+        node.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        node.dispatchEvent(new PointerEvent('pointerup', eventInit));
+        node.dispatchEvent(new MouseEvent('mouseup', eventInit));
+      }
+      node.dispatchEvent(new MouseEvent('click', eventInit));
+    };
+
+    const attempts = [];
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      candidate.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
+      await sleep(settleMs);
+      const before = candidate.getBoundingClientRect();
+      await sleep(40);
+      const after = candidate.getBoundingClientRect();
+      const stable = Math.abs(before.left - after.left) < 1 && Math.abs(before.top - after.top) < 1;
+      const rect = after;
+      const points = [
+        [rect.left + rect.width / 2, rect.top + rect.height / 2],
+        [rect.left + rect.width * 0.3, rect.top + rect.height * 0.5],
+        [rect.left + rect.width * 0.7, rect.top + rect.height * 0.5],
+        [rect.left + rect.width * 0.5, rect.top + rect.height * 0.3],
+        [rect.left + rect.width * 0.5, rect.top + rect.height * 0.7],
+      ];
+      let chosen = null;
+      for (const [x, y] of points) {
+        const top = document.elementFromPoint(x, y);
+        if (top && (candidate === top || candidate.contains(top))) {
+          chosen = { x, y, top };
+          break;
+        }
+      }
+      if (!chosen && allowForce) {
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        chosen = { x, y, top: candidate };
+      }
+      if (!chosen) {
+        attempts.push({ attempt, ok: false, stable, reason: 'covered_by_other_element' });
+        continue;
+      }
+      candidate.focus?.();
+      clickOnce(chosen.top || candidate, chosen.x, chosen.y);
+      attempts.push({ attempt, ok: true, stable, x: Math.round(chosen.x), y: Math.round(chosen.y) });
+      return {
+        clicked: true,
+        selector: targetSelector,
+        attempts,
+        usedAttempt: attempt,
+      };
+    }
+    throw new Error(`safeClick failed after ${maxAttempts} attempts`);
+  }, [selector, options], tabId);
+}
+
 async function executeStructuredDomActions(actions, tabId = null) {
   const resolvedTabId = await resolveTargetTabId(tabId);
   const [{ result }] = await chrome.scripting.executeScript({
@@ -1214,7 +1304,17 @@ async function handleCommand(command) {
         const best = elements[0];
         if (!best) throw new Error(`No visible element found for text: ${needle}`);
         best.el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-        best.el.click();
+        const rect = best.el.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const top = document.elementFromPoint(x, y);
+        const targetNode = top && (best.el === top || best.el.contains(top)) ? top : best.el;
+        const eventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1, view: window };
+        targetNode.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+        targetNode.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        targetNode.dispatchEvent(new PointerEvent('pointerup', eventInit));
+        targetNode.dispatchEvent(new MouseEvent('mouseup', eventInit));
+        targetNode.dispatchEvent(new MouseEvent('click', eventInit));
         return {
           clicked: true,
           matchedText: best.text,
@@ -1412,12 +1512,30 @@ async function handleCommand(command) {
       }, [params.kind || 'all', params.maxItems || 200], params.tabId ?? null);
     case 'click':
       await showMouseCue(params.selector, params.tabId ?? null, 'Click');
-      return await runAndRemember('click', (selector) => {
-        const el = document.querySelector(selector);
-        if (!el) throw new Error(`Selector not found: ${selector}`);
-        el.click();
-        return { clicked: true, selector };
-      }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
+      {
+        const resolvedTabId = await resolveTargetTabId(params.tabId ?? null);
+        const result = await safeClickWithRetries(params.selector, {
+          maxAttempts: params.maxAttempts || 3,
+          settleMs: params.settleMs || 90,
+          allowForce: params.allowForce === true,
+          preferHumanEvents: params.preferHumanEvents !== false,
+        }, resolvedTabId);
+        recordSessionEvent(resolvedTabId, 'click', { selector: params.selector });
+        return result;
+      }
+    case 'safeClick':
+      await showMouseCue(params.selector, params.tabId ?? null, 'Safe click');
+      return await runAndRemember('safeClick', async () => {
+        return await safeClickWithRetries(params.selector, {
+          maxAttempts: params.maxAttempts || 3,
+          settleMs: params.settleMs || 90,
+          allowForce: params.allowForce === true,
+          preferHumanEvents: params.preferHumanEvents !== false,
+        }, params.tabId ?? null);
+      }, [], params.tabId ?? null, () => ({
+        selector: params.selector,
+        maxAttempts: params.maxAttempts || 3,
+      }));
     case 'moveCursor':
       return await runAndRemember('moveCursor', (selector, steps, durationMs) => {
         const el = document.querySelector(selector);
