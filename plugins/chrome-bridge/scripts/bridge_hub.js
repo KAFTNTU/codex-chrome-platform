@@ -171,6 +171,76 @@ function validateUploadFiles(runtimeConfig, files = [], manualSelectedFiles = fa
   return validated;
 }
 
+function domainAllowedByPolicy(runtimeConfig, siteUrl) {
+  let host = '';
+  try {
+    host = String(new URL(siteUrl).hostname || '').toLowerCase();
+  } catch {
+    return { ok: false, code: 'POLICY_BLOCKED', message: 'Invalid current site URL.' };
+  }
+  const blocked = Array.isArray(runtimeConfig.blockedDomains) ? runtimeConfig.blockedDomains : [];
+  const allowed = Array.isArray(runtimeConfig.allowedUploadDomains) ? runtimeConfig.allowedUploadDomains : [];
+  const allowUnknown = runtimeConfig.allowUnknownDomains === true;
+  const blockedHit = blocked.some((d) => host === String(d).toLowerCase() || host.endsWith(`.${String(d).toLowerCase()}`));
+  if (blockedHit) return { ok: false, code: 'POLICY_BLOCKED', message: `Domain is blocked: ${host}` };
+  if (!allowUnknown && !allowed.some((d) => host === String(d).toLowerCase() || host.endsWith(`.${String(d).toLowerCase()}`))) {
+    return { ok: false, code: 'POLICY_BLOCKED', message: `Domain is not allowed: ${host}` };
+  }
+  return { ok: true, host };
+}
+
+function isLikelyQuizOrTestContext(tab = null) {
+  const text = `${tab?.url || ''} ${tab?.title || ''}`.toLowerCase();
+  return /(quiz|test|exam|attempt|assessment|контроль|тест)/i.test(text);
+}
+
+function extAllowed(runtimeConfig, fileName) {
+  const allowed = Array.isArray(runtimeConfig.allowedExtensions) ? runtimeConfig.allowedExtensions : [];
+  const ext = path.extname(String(fileName || '')).toLowerCase();
+  return allowed.length ? allowed.includes(ext) : true;
+}
+
+function maxFileSizeBytes(runtimeConfig) {
+  const mb = Number(runtimeConfig.maxFileSizeMb || 25);
+  return Math.max(1, mb) * 1024 * 1024;
+}
+
+function findFileByNameInAllowedFolders(runtimeConfig, fileName) {
+  const target = String(fileName || '').trim().toLowerCase();
+  if (!target) return null;
+  const roots = Array.isArray(runtimeConfig.allowedUploadFolders) ? runtimeConfig.allowedUploadFolders : [];
+  const queue = roots.map((root) => path.resolve(root));
+  const maxDirs = 4000;
+  let visited = 0;
+  while (queue.length && visited < maxDirs) {
+    const dir = queue.shift();
+    visited += 1;
+    if (!fs.existsSync(dir)) continue;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isFile() && entry.name.toLowerCase() === target) return full;
+      if (entry.isDirectory()) queue.push(full);
+    }
+  }
+  return null;
+}
+
+function saveDataUrlPng(dataUrl, prefix = 'upload') {
+  if (!dataUrl || !String(dataUrl).startsWith('data:image/png;base64,')) return null;
+  ensureOutputDir();
+  const stamp = Date.now();
+  const filePath = path.join(OUTPUT_DIR, `${prefix}_${stamp}.png`);
+  const b64 = String(dataUrl).slice('data:image/png;base64,'.length);
+  fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+  return filePath;
+}
+
 async function waitForResult(commandId, timeoutMs) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -313,6 +383,107 @@ function toCsvWithBom(table) {
 }
 
 async function executeLocalApiAction(action, params = {}) {
+  if (action === 'fileUploadAssistantAttachAndSubmit') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    if (isLikelyQuizOrTestContext(active)) {
+      return errorPayload('POLICY_BLOCKED', 'Quiz/test contexts are blocked for this action.');
+    }
+    const policy = domainAllowedByPolicy(runtime, active.url);
+    if (!policy.ok) return errorPayload(policy.code, policy.message);
+    if (runtime.mode === 'safe') {
+      if (!params.userOwnedCompletedWork || !params.confirmSubmit) {
+        return errorPayload('CONFIRMATION_REQUIRED', 'Safe mode requires userOwnedCompletedWork=true and confirmSubmit=true.');
+      }
+    }
+    if (runtime.educationMode?.enabled && runtime.educationMode?.requireUserOwnedCompletedWorkFlag && !params.userOwnedCompletedWork) {
+      return errorPayload('POLICY_BLOCKED', 'userOwnedCompletedWork=true is required by education policy.');
+    }
+    if (runtime.educationMode?.enabled && runtime.educationMode?.allowAttachAndSubmitOwnCompletedWork !== true) {
+      return errorPayload('POLICY_BLOCKED', 'Attach & submit is disabled by education policy.');
+    }
+    if (runtime.actions?.allowAutoSubmit === false && !params.confirmSubmit) {
+      return errorPayload('CONFIRMATION_REQUIRED', 'confirmSubmit=true is required.');
+    }
+    if (runtime.upload?.allowAttachAndSubmit !== true) {
+      return errorPayload('POLICY_BLOCKED', 'Attach & submit is disabled by upload policy.');
+    }
+    if (params.allowEducationPlatformUpload !== true && isEducationalUrl(active.url)) {
+      return errorPayload('POLICY_BLOCKED', 'allowEducationPlatformUpload=true is required for education platforms.');
+    }
+
+    const manualFiles = Array.isArray(params.manualSelectedFiles) ? params.manualSelectedFiles : [];
+    let resolvedPath = '';
+    if (manualFiles.length && params.fileName) {
+      const candidate = manualFiles.find((f) => path.basename(String(f || '')).toLowerCase() === String(params.fileName).toLowerCase());
+      if (candidate) resolvedPath = path.resolve(candidate);
+    }
+    if (!resolvedPath && params.fileName) {
+      resolvedPath = findFileByNameInAllowedFolders(runtime, params.fileName) || '';
+    }
+    if (!resolvedPath) {
+      return errorPayload('POLICY_BLOCKED', 'File not found in allowed folders or manual selection list.');
+    }
+    const validated = validateUploadFiles(runtime, [resolvedPath], manualFiles.includes(resolvedPath) || !!params.manualSelectedFiles)[0];
+    if (!extAllowed(runtime, validated.name)) {
+      return errorPayload('POLICY_BLOCKED', `Extension is not allowed: ${path.extname(validated.name)}`);
+    }
+    if (validated.size > maxFileSizeBytes(runtime)) {
+      return errorPayload('POLICY_BLOCKED', `File exceeds max size ${runtime.maxFileSizeMb} MB.`);
+    }
+
+    const uploadField = await executeRemoteAction('inspectUploadField', { selector: params.selector || 'input[type="file"]', tabId: params.tabId });
+    if (!uploadField?.found) return errorPayload('POLICY_BLOCKED', 'Upload field not found.');
+    if (!params.confirmAttach) return errorPayload('CONFIRMATION_REQUIRED', 'confirmAttach=true is required.');
+    await executeRemoteAction('setFileInputFiles', { selector: params.selector || 'input[type="file"]', files: [validated.path], tabId: params.tabId });
+    const afterAttach = await executeRemoteAction('screenshot', { tabId: params.tabId });
+    const afterAttachPath = saveDataUrlPng(afterAttach?.dataUrl || '', 'assistive_attach');
+
+    if (!params.confirmSubmit) return errorPayload('CONFIRMATION_REQUIRED', 'confirmSubmit=true is required.');
+    const submitCandidates = ['Submit', 'Send', 'Upload', 'Здати', 'Надіслати', 'Завантажити', 'Відправити'];
+    let submitResult = null;
+    let submitText = '';
+    for (const label of submitCandidates) {
+      try {
+        submitResult = await executeRemoteAction('clickByText', { text: label, exact: false, selector: 'button, input[type="submit"], [role="button"]', tabId: params.tabId });
+        submitText = submitResult?.matchedText || label;
+        break;
+      } catch {
+        // try next label
+      }
+    }
+    if (!submitResult) {
+      submitResult = await executeRemoteAction('submitForm', { selector: 'input[type="submit"], button[type="submit"]', tabId: params.tabId });
+      submitText = 'submitForm fallback';
+    }
+    const afterSubmit = await executeRemoteAction('screenshot', { tabId: params.tabId });
+    const afterSubmitPath = saveDataUrlPng(afterSubmit?.dataUrl || '', 'assistive_submit');
+
+    appendAssistiveUploadLog({
+      kind: 'assistive_upload_attach_and_submit',
+      site: active.url,
+      fileName: validated.name,
+      uploadSelector: params.selector || 'input[type="file"]',
+      submitButtonText: submitText,
+      status: 'submitted',
+      mode: runtime.mode,
+      logType: 'assistive upload submit',
+    });
+    return {
+      ok: true,
+      assistant: 'Attach & Submit own completed file',
+      fileName: validated.name,
+      site: active.url,
+      uploadSelector: params.selector || 'input[type="file"]',
+      submitButtonText: submitText,
+      status: 'submitted',
+      screenshotPath: {
+        afterAttach: afterAttachPath,
+        afterSubmit: afterSubmitPath,
+      },
+      logPath: ASSISTIVE_UPLOAD_LOG,
+    };
+  }
   if (action === 'fileUploadAssistantPreview') {
     const active = latestClient()?.lastTab || null;
     if (!active?.url) {

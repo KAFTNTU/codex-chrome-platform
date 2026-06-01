@@ -28,6 +28,28 @@ const DEFAULT_RUNTIME = {
     path.join(os.homedir(), 'Documents'),
     path.join(os.homedir(), 'Downloads'),
   ],
+  allowedUploadDomains: [],
+  allowUnknownDomains: false,
+  allowedExtensions: ['.doc', '.docx', '.pdf', '.txt', '.rtf', '.odt', '.zip', '.7z'],
+  maxFileSizeMb: 25,
+  educationMode: {
+    enabled: true,
+    allowOnlyUserProvidedFiles: true,
+    allowAnswerGeneration: false,
+    allowQuizAutomation: false,
+    allowAttachAndSubmitOwnCompletedWork: true,
+    requireUserOwnedCompletedWorkFlag: true,
+    requireConfirmSubmit: true,
+  },
+  upload: {
+    allowAttachAndSubmit: true,
+  },
+  actions: {
+    allowAttachFile: true,
+    allowSubmitOwnCompletedWork: true,
+    allowAutoSubmit: false,
+    requireConfirmationBeforeSubmit: true,
+  },
 };
 
 function ensureDir(dirPath) {
@@ -154,6 +176,9 @@ function normalizeActionName(action) {
     file_upload_assistant_submit: 'fileUploadAssistantSubmit',
     document_attachment_assistant_submit: 'fileUploadAssistantSubmit',
     personal_upload_helper_submit: 'fileUploadAssistantSubmit',
+    file_upload_assistant_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
+    document_attachment_assistant_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
+    personal_upload_helper_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
     download_file: 'downloadUrl',
     run_action_queue: 'runActionQueue',
   };
