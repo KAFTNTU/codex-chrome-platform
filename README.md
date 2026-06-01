@@ -1,101 +1,107 @@
 # Codex Chrome Platform
 
-Локальна платформа для автоматизації браузера (Chrome/Edge), яка дає змогу керувати реальною вкладкою через `chrome-bridge`.
+Local browser automation platform for Chrome/Edge with:
+- Chrome Bridge extension
+- local HTTP bridge API
+- MCP tools
+- desktop launcher
 
-## Що це вміє (практично)
+## What It Can Do
 
-- Я можу відкрити потрібний сайт або курс, знайти конкретну тему і перевірити, що відкрилась саме вона (по URL/заголовку).
-- Я можу натискати кнопки стабільніше, навіть коли елемент перекритий або сторінка "стрибає" (`safeClick` з retries).
-- Я можу клікати по найближчому збігу тексту, коли на сторінці кілька схожих елементів (`clickNearestMatch`).
-- Я можу вводити текст, вставляти через clipboard, заповнювати форми, робити submit і автозаповнення логіну/пароля.
-- Я можу робити скрін усієї сторінки або тільки потрібної області (`screenshot`, `elementScreenshot`).
-- Я можу читати JS помилки і мережеві події без DevTools (`getConsoleLog`, `networkGetLog`, `readResponseBody`).
-- Я можу чекати появу тексту або стану сторінки, щоб не клікати "в сліпу" (`waitForText`).
-- Я можу працювати зі складним UI: `contenteditable`, Monaco/CodeMirror, Shadow DOM, dropdown/menu після hover.
-- Я можу робити контрольовану прокрутку вниз/вгору і не залипати в кінці сторінки.
-- Я можу записувати і відтворювати сценарії (макроси) для повторюваних перевірок.
-- Я можу збирати коротку "пам'ять сесії": що було натиснуто, що змінювалось, які дії вже виконані.
+- Control real browser tabs (navigate, click, type, scroll, extract).
+- Capture screenshots (full page and element).
+- Read console/network signals for debugging flows.
+- Run reusable recipes/macros.
+- Use guarded file upload automation for user-owned completed files.
 
-## Архітектура
+## Universal File Upload Assistant
 
-- `plugins/chrome-bridge/scripts/bridge_hub.js`  
-  Локальний HTTP hub (`/health`, `/status`, `/api/action`), токен-автентифікація, маршрутизація команд.
-- `plugins/chrome-bridge/scripts/bridge_runtime.js`  
-  Режими безпеки, токен, normalizer назв команд (`snake_case` -> `camelCase`).
-- `plugins/chrome-bridge/assets/companion-extension/`  
-  Розширення-компаньйон (service worker + popup UI), виконує дії у вкладці.
-- `desktop-app/`  
-  Electron-лаунчер для запуску/зупинки моста і швидких дій.
+The upload assistant supports universal file lookup via `fileQuery`:
+- exact: `report.docx`
+- partial/fuzzy: `звіт`
+- glob: `*.pdf`
+- newest by extension: `newest:.pdf`
+- newest allowed file: `newest`
+- multiple file mode: `multiple=true`
 
-## Режими безпеки
+Search scope is restricted to:
+- `upload.allowedFolders` (or legacy `allowedUploadFolders`)
+- `manualSelectedFiles`
 
-- `safe` (за замовчуванням): блокує ризикові дії (`cookies`, `runScript`, debugger-команди).
-- `developer`: відкриває розширені дії для тестування і налагодження.
-- `local_network`: опціонально для LAN, тільки з токеном.
+No "any file anywhere" mode is allowed.
 
-Токен зберігається у: `%USERPROFILE%\\.chrome-bridge\\runtime.json`
+### Universal Actions
 
-## Швидкий старт
+- `universalFileUploadPreflight`
+- `universalFileUploadPreview`
+- `universalFileUploadAttach`
+- `universalFileUploadAttachAndSubmit`
+- `universalFileUploadPreflightAttachAndSubmit`
 
-### 1) Встановлення
+Backward-compatible aliases:
+- `fileUploadAssistantPreview`
+- `fileUploadAssistantAttach`
+- `fileUploadAssistantAttachAndSubmit`
+
+### Preflight Actions
+
+- `fileUploadAssistantPreflight`
+- `fileUploadAssistantPreflightAttachAndSubmit`
+
+Preflight creates a temp copy in:
+- `~/.chrome-bridge/preflight/`
+
+And checks technical readiness only:
+- file exists / is file / non-empty
+- extension and size policy
+- copy integrity checksum match
+- container integrity for `.docx`, `.xlsx`, `.zip`
+- basic header/page checks for `.pdf`
+
+The system does **not** edit or evaluate educational content.
+
+## Policy Model
+
+Global safety defaults:
+- `actions.allowAutoSubmit = false`
+- submit only through guarded upload actions with explicit confirmations
+- blocked on quiz/test/exam contexts
+- blocked on unknown/blocked domains when policy requires it
+
+Target model:
+- any allowed file -> any allowed domain
+
+## MCP Tools (Upload)
+
+- `chrome_bridge_universal_file_upload_preflight`
+- `chrome_bridge_universal_file_upload_preview`
+- `chrome_bridge_universal_file_upload_attach`
+- `chrome_bridge_universal_file_upload_attach_and_submit`
+- `chrome_bridge_universal_file_upload_preflight_attach_and_submit`
+- `chrome_bridge_file_upload_assistant_preflight`
+- `chrome_bridge_file_upload_assistant_preflight_attach_and_submit`
+
+## Quick Start
 
 ```powershell
 npm install
-```
-
-### 2) Запуск моста
-
-```powershell
 npm run start-bridge
 ```
 
-### 3) Підключення розширення
+Load extension in browser:
+1. Open `edge://extensions` or `chrome://extensions`
+2. Enable Developer Mode
+3. Load unpacked:
+4. `plugins/chrome-bridge/assets/companion-extension`
 
-1. Відкрити `edge://extensions` або `chrome://extensions`
-2. Увімкнути `Developer mode`
-3. `Load unpacked`
-4. Вибрати папку `plugins/chrome-bridge/assets/companion-extension`
+## Paths
 
-### 4) Перевірка
+- Runtime: `%USERPROFILE%\\.chrome-bridge\\runtime.json`
+- Logs: `%USERPROFILE%\\.chrome-bridge\\logs\\`
+- Output: `%USERPROFILE%\\.chrome-bridge\\output\\`
+- Preflight copies: `%USERPROFILE%\\.chrome-bridge\\preflight\\`
 
-```powershell
-curl http://127.0.0.1:17373/health
-```
+## Security Note
 
-## Приклади API дій
-
-```bash
-curl -X POST http://127.0.0.1:17373/api/action \
-  -H "Content-Type: application/json" \
-  -H "X-Bridge-Token: YOUR_TOKEN" \
-  -d "{\"action\":\"navigate\",\"params\":{\"url\":\"https://example.com\"},\"token\":\"YOUR_TOKEN\"}"
-```
-
-```bash
-curl -X POST http://127.0.0.1:17373/api/action \
-  -H "Content-Type: application/json" \
-  -H "X-Bridge-Token: YOUR_TOKEN" \
-  -d "{\"action\":\"safe_click\",\"params\":{\"selector\":\"button[type='submit']\",\"maxAttempts\":3},\"token\":\"YOUR_TOKEN\"}"
-```
-
-```bash
-curl -X POST http://127.0.0.1:17373/api/action \
-  -H "Content-Type: application/json" \
-  -H "X-Bridge-Token: YOUR_TOKEN" \
-  -d "{\"action\":\"element_screenshot\",\"params\":{\"selector\":\".result-card\"},\"token\":\"YOUR_TOKEN\"}"
-```
-
-## Для розробника тестів
-
-Підходить для:
-
-- smoke/regression перевірок у реальному браузері;
-- повторюваних E2E сценаріїв через макроси;
-- швидкого дебагу UI через console/network логи;
-- перевірок React SPA, де важливо чекати стан, а не просто ставити `sleep`.
-
-## Privacy
-
-- За замовчуванням дані залишаються локально.
-- Команди захищені токеном.
-- Без явного вмикання `local_network` нічого не слухає LAN.
+This platform is designed as an assistive automation tool.
+It must not be used to bypass authentication, break platform rules, or automate quiz/test answering.
