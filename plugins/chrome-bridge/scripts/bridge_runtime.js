@@ -124,6 +124,10 @@ function normalizeActionName(action) {
     navigate_and_wait: 'navigateAndWait',
     wait_for_page_ready: 'waitForPageReady',
     open_ato_module: 'openAtoModule',
+    open_ato_topic: 'openAtoTopicByTitle',
+    open_ato_topic_by_title: 'openAtoTopicByTitle',
+    ensure_ato_context: 'ensureAtoContext',
+    reading_scroll_session: 'readingScrollSession',
     open_tab: 'openNewTab',
     wait_for_text: 'waitForText',
     wait_until_text: 'waitForText',
@@ -135,7 +139,9 @@ function normalizeActionName(action) {
     upload_files: 'setFileInputFiles',
     upload_document: 'setFileInputFiles',
     upload_photo: 'setFileInputFiles',
+    ato_prepare_dropbox_upload: 'atoPrepareDropboxUpload',
     download_file: 'downloadUrl',
+    run_action_queue: 'runActionQueue',
   };
   return map[action] || action;
 }

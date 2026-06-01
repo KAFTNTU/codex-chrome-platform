@@ -445,6 +445,142 @@ async function openAtoModule(moduleKey, options = {}, tabId = null) {
   }, tabId);
 }
 
+async function openAtoTopicByTitle(title, options = {}, tabId = null) {
+  const query = String(title || '').trim();
+  if (!query) throw new Error('title is required');
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const scan = await executeInTab((needle) => {
+    const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const target = norm(needle);
+    const visible = (el) => {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const links = Array.from(document.querySelectorAll('a[href]')).filter(visible).map((el) => {
+      const text = norm(el.textContent || el.innerText || '');
+      if (!text) return null;
+      let score = -1;
+      if (text === target) score = 1000;
+      else if (text.includes(target)) score = 700 - Math.max(0, text.length - target.length);
+      else {
+        const overlap = target.split(' ').filter((part) => part && text.includes(part)).length;
+        if (overlap > 0) score = 200 + overlap;
+      }
+      if (score < 0) return null;
+      return {
+        href: el.href,
+        text: text.slice(0, 220),
+        score,
+      };
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+    return {
+      best: links[0] || null,
+      alternatives: links.slice(1, 6),
+      currentUrl: location.href,
+      title: document.title,
+    };
+  }, [query], resolvedTabId);
+  if (!scan?.best?.href) {
+    throw new Error(`Topic not found by title: ${query}`);
+  }
+  const nav = await navigateAndWait(scan.best.href, {
+    timeoutMs: options.timeoutMs || 18000,
+    titleContains: options.titleContains || null,
+  }, resolvedTabId);
+  return { ok: true, query, chosen: scan.best, alternatives: scan.alternatives || [], navigation: nav };
+}
+
+async function ensureAtoContext(options = {}, tabId = null) {
+  return await executeInTab((expectedCourse, expectedModule) => {
+    const href = location.href;
+    const title = document.title || '';
+    const checks = [];
+    if (expectedCourse) {
+      const ok = href.toLowerCase().includes(String(expectedCourse).toLowerCase()) ||
+        title.toLowerCase().includes(String(expectedCourse).toLowerCase());
+      checks.push({ key: 'course', expected: expectedCourse, ok });
+    }
+    if (expectedModule) {
+      const ok = href.toLowerCase().includes(String(expectedModule).toLowerCase()) ||
+        title.toLowerCase().includes(String(expectedModule).toLowerCase());
+      checks.push({ key: 'module', expected: expectedModule, ok });
+    }
+    return {
+      ok: checks.every((x) => x.ok),
+      url: href,
+      title,
+      checks,
+    };
+  }, [options.expectedCourse || null, options.expectedModule || null], tabId);
+}
+
+async function atoPrepareDropboxUpload(params = {}, tabId = null) {
+  const files = Array.isArray(params.files) ? params.files : [];
+  if (!files.length) throw new Error('files is required');
+  const selector = params.fileSelector || 'input[type="file"]';
+  const uploadResult = await setFileInputFiles(selector, files, tabId);
+  const postCheck = await executeInTab(() => {
+    const fileInput = document.querySelector('input[type="file"]');
+    const selectedCount = fileInput?.files?.length || 0;
+    const submitButtons = Array.from(document.querySelectorAll('button, input[type="submit"], [role="button"]'))
+      .filter((el) => {
+        const text = String(el.innerText || el.textContent || el.value || '').toLowerCase();
+        return /відправ|submit|upload|завантаж/i.test(text);
+      })
+      .slice(0, 4)
+      .map((el) => ({
+        text: String(el.innerText || el.textContent || el.value || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+        tag: el.tagName.toLowerCase(),
+      }));
+    return { selectedCount, submitButtons };
+  }, [], tabId);
+  return {
+    ok: true,
+    upload: uploadResult,
+    selectedCount: postCheck?.selectedCount || 0,
+    submitButtons: postCheck?.submitButtons || [],
+    readyForManualSubmit: (postCheck?.selectedCount || 0) > 0,
+  };
+}
+
+async function readingScrollSession(params = {}, tabId = null) {
+  const totalMinutes = Math.max(1, Number(params.minutes || 3));
+  const stepY = Math.max(40, Number(params.stepY || 120));
+  const delayMs = Math.max(200, Number(params.delayMs || 900));
+  const upRatio = Math.min(0.6, Math.max(0, Number(params.upRatio || 0.22)));
+  const totalMs = totalMinutes * 60 * 1000;
+  const startedAt = Date.now();
+  let downMoves = 0;
+  let upMoves = 0;
+  while (Date.now() - startedAt < totalMs) {
+    const down = await executeInTab((step) => {
+      const before = window.scrollY;
+      window.scrollBy(0, step);
+      const after = window.scrollY;
+      const bottom = (window.innerHeight + Math.ceil(after)) >= Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);
+      return { before, after, moved: after - before, bottom };
+    }, [stepY], tabId);
+    downMoves += 1;
+    if (down?.bottom) {
+      await executeInTab((step) => window.scrollBy(0, -Math.max(80, Math.round(step * 3.2))), [stepY], tabId);
+      upMoves += 1;
+    } else if (Math.random() < upRatio) {
+      await executeInTab((step) => window.scrollBy(0, -Math.max(50, Math.round(step * 1.5))), [stepY], tabId);
+      upMoves += 1;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return {
+    ok: true,
+    minutes: totalMinutes,
+    elapsedMs: Date.now() - startedAt,
+    downMoves,
+    upMoves,
+  };
+}
+
 async function showMouseCue(selector, tabId = null, label = 'Agent') {
   if (!state.mouseCueEnabled || !selector) return { shown: false, disabled: true };
   return await executeInTab((targetSelector, targetLabel) => {
@@ -1149,6 +1285,23 @@ async function handleCommand(command) {
         titleContains: params.titleContains || null,
         urlContains: params.urlContains || null,
         baseUrl: params.baseUrl || null,
+      }, params.tabId ?? null);
+    case 'openAtoTopicByTitle':
+      return await openAtoTopicByTitle(params.title || params.text || '', {
+        timeoutMs: params.timeoutMs || 18000,
+        titleContains: params.titleContains || null,
+      }, params.tabId ?? null);
+    case 'ensureAtoContext':
+      return await ensureAtoContext({
+        expectedCourse: params.expectedCourse || null,
+        expectedModule: params.expectedModule || null,
+      }, params.tabId ?? null);
+    case 'readingScrollSession':
+      return await readingScrollSession({
+        minutes: params.minutes || 3,
+        stepY: params.stepY || 120,
+        delayMs: params.delayMs || 900,
+        upRatio: params.upRatio ?? 0.22,
       }, params.tabId ?? null);
     case 'back': {
       const resolvedTabId = await resolveTargetTabId(params.tabId ?? null);
@@ -2237,6 +2390,11 @@ async function handleCommand(command) {
       }, [params.selector], params.tabId ?? null, () => ({ selector: params.selector }));
     case 'setFileInputFiles':
       return await setFileInputFiles(params.selector, params.files || [], params.tabId ?? null);
+    case 'atoPrepareDropboxUpload':
+      return await atoPrepareDropboxUpload({
+        files: params.files || [],
+        fileSelector: params.fileSelector || null,
+      }, params.tabId ?? null);
     case 'getSessionMemory':
       return getSessionMemory(params.tabId ?? null);
     case 'clearSessionMemory':
@@ -2324,6 +2482,24 @@ async function handleCommand(command) {
         results.push(await handleCommand({ action: step.action, params: stepParams }));
       }
       return { ok: true, name, stepCount: recipe.length, results };
+    }
+    case 'runActionQueue': {
+      const queue = Array.isArray(params.queue) ? params.queue : [];
+      if (!queue.length) throw new Error('queue is required');
+      const results = [];
+      for (const step of queue) {
+        const action = String(step.action || '').trim();
+        if (!action) throw new Error('queue step action is required');
+        const stepParams = { ...(step.params || {}) };
+        if (params.tabId != null && stepParams.tabId == null) {
+          stepParams.tabId = params.tabId;
+        }
+        results.push({
+          action,
+          result: await handleCommand({ action, params: stepParams }),
+        });
+      }
+      return { ok: true, steps: queue.length, results };
     }
     case 'runScript':
       return await executeInTab((script) => {
