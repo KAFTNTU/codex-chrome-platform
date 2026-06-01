@@ -23,6 +23,11 @@ const DEFAULT_RUNTIME = {
   sensitiveDomains: SENSITIVE_DOMAINS,
   blockedDomains: [],
   confirmations: {},
+  allowedUploadFolders: [
+    path.join(os.homedir(), 'Desktop'),
+    path.join(os.homedir(), 'Documents'),
+    path.join(os.homedir(), 'Downloads'),
+  ],
 };
 
 function ensureDir(dirPath) {
@@ -140,6 +145,12 @@ function normalizeActionName(action) {
     upload_document: 'setFileInputFiles',
     upload_photo: 'setFileInputFiles',
     ato_prepare_dropbox_upload: 'atoPrepareDropboxUpload',
+    file_upload_assistant_preview: 'fileUploadAssistantPreview',
+    file_upload_assistant_attach: 'fileUploadAssistantAttach',
+    document_attachment_assistant_preview: 'fileUploadAssistantPreview',
+    document_attachment_assistant_attach: 'fileUploadAssistantAttach',
+    personal_upload_helper_preview: 'fileUploadAssistantPreview',
+    personal_upload_helper_attach: 'fileUploadAssistantAttach',
     download_file: 'downloadUrl',
     run_action_queue: 'runActionQueue',
   };

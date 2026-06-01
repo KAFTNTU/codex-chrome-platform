@@ -1606,6 +1606,38 @@ async function handleCommand(command) {
           }));
         return { title: document.title, url: location.href, forms };
       }, [params.maxForms || 20], params.tabId ?? null);
+    case 'inspectUploadField':
+      return await executeInTab((selector) => {
+        const targetSelector = selector || 'input[type="file"]';
+        const list = Array.from(document.querySelectorAll(targetSelector));
+        const visible = (el) => {
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+        };
+        const first = list[0] || null;
+        const chosen = list.find(visible) || first;
+        if (!chosen) {
+          return { found: false, selector: targetSelector, totalMatches: 0, visibleMatches: 0 };
+        }
+        const rect = chosen.getBoundingClientRect();
+        return {
+          found: true,
+          selector: targetSelector,
+          totalMatches: list.length,
+          visibleMatches: list.filter(visible).length,
+          tag: chosen.tagName.toLowerCase(),
+          id: chosen.id || null,
+          name: chosen.getAttribute('name') || null,
+          accept: chosen.getAttribute('accept') || null,
+          multiple: !!chosen.multiple,
+          disabled: !!chosen.disabled,
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+      }, [params.selector || null], params.tabId ?? null);
     case 'fillFields':
       return await executeInTab((entries) => {
         const results = [];

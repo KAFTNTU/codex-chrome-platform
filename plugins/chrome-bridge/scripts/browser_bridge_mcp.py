@@ -64,6 +64,8 @@ TOOLS = [
     {"name":"chrome_bridge_smart_focus","description":"Focus the most likely input or button on the page.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["input","button"]},"text":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_open_file_picker","description":"Open the system file picker for an input[type=file].","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_set_file_input_files","description":"Set files on an input[type=file] using local filesystem paths.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"tabId":{"type":"integer"}},"required":["selector","files"],"additionalProperties":False}},
+    {"name":"chrome_bridge_file_upload_assistant_preview","description":"Preview assistive upload: validates allowed/manual files and returns file info + page screenshot before attachment.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"manualSelectedFiles":{"type":"boolean"},"userOwnedCompletedWork":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["files"],"additionalProperties":False}},
+    {"name":"chrome_bridge_file_upload_assistant_attach","description":"Attach validated files (no submit) after explicit confirmAttach=true.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"manualSelectedFiles":{"type":"boolean"},"userOwnedCompletedWork":{"type":"boolean"},"confirmAttach":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["files","confirmAttach"],"additionalProperties":False}},
     {"name":"chrome_bridge_get_session_memory","description":"Read short-term bridge memory for the current page session.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_clear_session_memory","description":"Clear short-term bridge memory for a tab or for all tabs.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_get_console_log","description":"Read captured console logs and page exceptions without opening DevTools.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
@@ -285,6 +287,18 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         payload={"selector":arguments["selector"],"files":arguments["files"]}
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
         return as_text_content(call_bridge("setFileInputFiles",payload))
+    if name=="chrome_bridge_file_upload_assistant_preview":
+        payload={"files":arguments["files"]}
+        for field in ("selector","manualSelectedFiles","userOwnedCompletedWork"):
+            if field in arguments: payload[field]=arguments[field]
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("fileUploadAssistantPreview",payload))
+    if name=="chrome_bridge_file_upload_assistant_attach":
+        payload={"files":arguments["files"],"confirmAttach":bool(arguments.get("confirmAttach",False))}
+        for field in ("selector","manualSelectedFiles","userOwnedCompletedWork"):
+            if field in arguments: payload[field]=arguments[field]
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("fileUploadAssistantAttach",payload))
     if name=="chrome_bridge_get_session_memory":
         payload={}
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])

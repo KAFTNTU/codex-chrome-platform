@@ -22,6 +22,9 @@ const HOST = process.env.CHROME_BRIDGE_HOST || (runtime.localNetworkEnabled ? '0
 const clients = new Map();
 const results = new Map();
 const OUTPUT_DIR = path.join(os.homedir(), '.chrome-bridge', 'output');
+const LOGS_DIR = path.join(os.homedir(), '.chrome-bridge', 'logs');
+const ASSISTIVE_UPLOAD_LOG = path.join(LOGS_DIR, 'assistive_upload.log');
+const EDUCATIONAL_HOST_HINTS = ['atutor', 'moodle', 'canvas', 'blackboard', 'school', 'edu.'];
 
 function now() { return new Date().toISOString(); }
 
@@ -110,6 +113,64 @@ function ensureOutputDir() {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
 
+function ensureLogsDir() {
+  fs.mkdirSync(LOGS_DIR, { recursive: true });
+}
+
+function appendAssistiveUploadLog(entry) {
+  ensureLogsDir();
+  fs.appendFileSync(ASSISTIVE_UPLOAD_LOG, `${JSON.stringify({ ts: now(), ...entry })}\n`, 'utf8');
+}
+
+function isEducationalUrl(rawUrl = '') {
+  try {
+    const u = new URL(rawUrl);
+    const host = String(u.hostname || '').toLowerCase();
+    return EDUCATIONAL_HOST_HINTS.some((hint) => host.includes(hint));
+  } catch {
+    return false;
+  }
+}
+
+function normalizeFsPath(filePath) {
+  return path.resolve(String(filePath || '')).toLowerCase();
+}
+
+function isWithinFolder(filePath, folderPath) {
+  const fileNorm = normalizeFsPath(filePath);
+  const folderNorm = normalizeFsPath(folderPath);
+  return fileNorm === folderNorm || fileNorm.startsWith(`${folderNorm}${path.sep}`);
+}
+
+function validateUploadFiles(runtimeConfig, files = [], manualSelectedFiles = false) {
+  if (!Array.isArray(files) || !files.length) {
+    throw Object.assign(new Error('files is required'), { bridgeCode: 'INVALID_PARAMS' });
+  }
+  const allowedFolders = Array.isArray(runtimeConfig.allowedUploadFolders) ? runtimeConfig.allowedUploadFolders : [];
+  const validated = files.map((rawPath) => {
+    const resolved = path.resolve(String(rawPath || ''));
+    if (!fs.existsSync(resolved)) {
+      throw Object.assign(new Error(`File does not exist: ${resolved}`), { bridgeCode: 'INVALID_PARAMS' });
+    }
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) {
+      throw Object.assign(new Error(`Not a file: ${resolved}`), { bridgeCode: 'INVALID_PARAMS' });
+    }
+    const fromAllowedFolder = allowedFolders.some((folder) => isWithinFolder(resolved, folder));
+    if (!manualSelectedFiles && !fromAllowedFolder) {
+      throw Object.assign(new Error(`File outside allowed folders: ${resolved}`), { bridgeCode: 'UPLOAD_POLICY_BLOCK' });
+    }
+    return {
+      path: resolved,
+      name: path.basename(resolved),
+      size: stat.size,
+      fromAllowedFolder,
+      manualSelected: !!manualSelectedFiles,
+    };
+  });
+  return validated;
+}
+
 async function waitForResult(commandId, timeoutMs) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -155,6 +216,13 @@ function dispatchActionRequest(body) {
   const active = latestClient()?.lastTab || null;
 
   if (runtime.mode === 'safe') {
+    if (normalizedAction === 'submitForm') {
+      return {
+        ok: false,
+        status: 403,
+        payload: errorPayload('SAFE_MODE_SUBMIT_BLOCKED', 'Submit actions are blocked in safe mode. Use manual submit in browser.'),
+      };
+    }
     if (!actionAllowedInSafeMode(normalizedAction)) {
       return {
         ok: false,
@@ -245,6 +313,77 @@ function toCsvWithBom(table) {
 }
 
 async function executeLocalApiAction(action, params = {}) {
+  if (action === 'fileUploadAssistantPreview') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) {
+      return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found for upload preview.');
+    }
+    const educational = isEducationalUrl(active.url);
+    if (educational && !params.userOwnedCompletedWork) {
+      return errorPayload('UPLOAD_POLICY_BLOCK', 'Educational platform uploads are allowed only for user-owned completed work.');
+    }
+    const files = validateUploadFiles(runtime, params.files || [], !!params.manualSelectedFiles);
+    const selector = String(params.selector || 'input[type="file"]');
+    const fieldInfo = await executeRemoteAction('inspectUploadField', { selector, tabId: params.tabId });
+    const screenshot = await executeRemoteAction('screenshot', { tabId: params.tabId });
+    const preview = {
+      assistant: 'File Upload Assistant',
+      mode: runtime.mode,
+      site: active.url,
+      title: active.title || '',
+      uploadField: selector,
+      uploadFieldInfo: fieldInfo || null,
+      files: files.map((f) => ({ name: f.name, size: f.size, path: f.path })),
+      screenshotDataUrl: screenshot?.dataUrl || null,
+      note: 'Preview only. No submit is performed.',
+    };
+    appendAssistiveUploadLog({
+      kind: 'assistive_upload_preview',
+      site: active.url,
+      uploadField: selector,
+      files: preview.files.map((f) => ({ name: f.name, size: f.size })),
+      userOwnedCompletedWork: !!params.userOwnedCompletedWork,
+    });
+    return { ok: true, preview };
+  }
+  if (action === 'fileUploadAssistantAttach') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) {
+      return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found for upload attach.');
+    }
+    const educational = isEducationalUrl(active.url);
+    if (educational && !params.userOwnedCompletedWork) {
+      return errorPayload('UPLOAD_POLICY_BLOCK', 'Educational platform uploads are allowed only for user-owned completed work.');
+    }
+    if (!params.confirmAttach) {
+      return errorPayload('CONFIRMATION_REQUIRED', 'Set confirmAttach=true after preview to proceed with attachment.');
+    }
+    const selector = String(params.selector || 'input[type="file"]');
+    const files = validateUploadFiles(runtime, params.files || [], !!params.manualSelectedFiles);
+    const attach = await executeRemoteAction('setFileInputFiles', {
+      selector,
+      files: files.map((f) => f.path),
+      tabId: params.tabId,
+    });
+    appendAssistiveUploadLog({
+      kind: 'assistive_upload_attach',
+      site: active.url,
+      uploadField: selector,
+      files: files.map((f) => ({ name: f.name, size: f.size })),
+      submitPerformed: false,
+      mode: runtime.mode,
+    });
+    return {
+      ok: true,
+      assistant: 'File Upload Assistant',
+      attached: true,
+      submitPerformed: false,
+      uploadField: selector,
+      files: files.map((f) => ({ name: f.name, size: f.size, path: f.path })),
+      result: attach,
+      nextStep: 'User must manually confirm and click Submit.',
+    };
+  }
   if (action === 'getActiveTab') {
     const status = currentStatus();
     return { ok: true, activeTab: status.activeTab };
