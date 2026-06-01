@@ -365,6 +365,86 @@ async function runAndRemember(action, func, args = [], tabId = null, detailBuild
   return result;
 }
 
+async function waitForPageReady(tabId = null, timeoutMs = 15000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < Math.max(1000, Number(timeoutMs || 15000))) {
+    const state = await executeInTab(() => {
+      return {
+        readyState: document.readyState,
+        title: document.title || '',
+        url: location.href,
+      };
+    }, [], tabId);
+    if (state?.readyState === 'complete' || state?.readyState === 'interactive') {
+      return {
+        ok: true,
+        elapsedMs: Date.now() - startedAt,
+        readyState: state.readyState,
+        title: state.title,
+        url: state.url,
+      };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 160));
+  }
+  throw new Error('Timed out waiting for page ready state');
+}
+
+async function navigateAndWait(url, options = {}, tabId = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  await chrome.tabs.update(resolvedTabId, { url });
+  const ready = await waitForPageReady(resolvedTabId, options.timeoutMs || 15000);
+  const titleNeedle = String(options.titleContains || '').trim().toLowerCase();
+  const urlNeedle = String(options.urlContains || '').trim().toLowerCase();
+  if (titleNeedle || urlNeedle) {
+    const startedAt = Date.now();
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 15000));
+    while (Date.now() - startedAt < timeoutMs) {
+      const snap = await activeTab();
+      const titleOk = !titleNeedle || (snap?.title || '').toLowerCase().includes(titleNeedle);
+      const urlOk = !urlNeedle || (snap?.url || '').toLowerCase().includes(urlNeedle);
+      if (titleOk && urlOk) {
+        return { ok: true, tabId: resolvedTabId, url: snap.url, title: snap.title, ready };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 180));
+    }
+    throw new Error(`Navigation finished but condition not met: title~"${options.titleContains || ''}" url~"${options.urlContains || ''}"`);
+  }
+  const tab = await chrome.tabs.get(resolvedTabId);
+  return { ok: true, tabId: resolvedTabId, url: tab.url || url, title: tab.title || '', ready };
+}
+
+function resolveAtoModulePath(moduleKey) {
+  const key = String(moduleKey || '').trim().toLowerCase();
+  const map = {
+    home: '/ATutor/bounce.php?course=1',
+    file_storage: '/ATutor/mods/_standard/file_storage/index.php',
+    files: '/ATutor/mods/_standard/file_storage/index.php',
+    assignment_dropbox: '/ATutor/mods/_standard/assignment_dropbox/index.php',
+    dropbox: '/ATutor/mods/_standard/assignment_dropbox/index.php',
+    tests: '/ATutor/mods/_standard/tests/my_tests.php',
+    glossary: '/ATutor/mods/_core/glossary/index.php',
+    chat: '/ATutor/mods/_standard/chat/index.php',
+    directory: '/ATutor/mods/_standard/directory/directory.php',
+  };
+  return map[key] || null;
+}
+
+async function openAtoModule(moduleKey, options = {}, tabId = null) {
+  const current = await activeTab();
+  const baseUrl = String(options.baseUrl || current?.url || '').trim();
+  if (!baseUrl) throw new Error('Unable to resolve ATutor base URL');
+  const modulePath = resolveAtoModulePath(moduleKey);
+  if (!modulePath) throw new Error(`Unknown ATutor module key: ${moduleKey}`);
+  const base = new URL(baseUrl);
+  const finalUrl = `${base.protocol}//${base.host}${modulePath}`;
+  const titleHint = options.titleContains || null;
+  return await navigateAndWait(finalUrl, {
+    timeoutMs: options.timeoutMs || 18000,
+    titleContains: titleHint || null,
+    urlContains: options.urlContains || modulePath,
+  }, tabId);
+}
+
 async function showMouseCue(selector, tabId = null, label = 'Agent') {
   if (!state.mouseCueEnabled || !selector) return { shown: false, disabled: true };
   return await executeInTab((targetSelector, targetLabel) => {
@@ -1055,6 +1135,21 @@ async function handleCommand(command) {
       await chrome.tabs.update(resolvedTabId, { url: params.url });
       return { ok: true, tabId: resolvedTabId, url: params.url };
     }
+    case 'navigateAndWait':
+      return await navigateAndWait(params.url, {
+        timeoutMs: params.timeoutMs || 15000,
+        titleContains: params.titleContains || null,
+        urlContains: params.urlContains || null,
+      }, params.tabId ?? null);
+    case 'waitForPageReady':
+      return await waitForPageReady(params.tabId ?? null, params.timeoutMs || 15000);
+    case 'openAtoModule':
+      return await openAtoModule(params.moduleKey || params.module || '', {
+        timeoutMs: params.timeoutMs || 18000,
+        titleContains: params.titleContains || null,
+        urlContains: params.urlContains || null,
+        baseUrl: params.baseUrl || null,
+      }, params.tabId ?? null);
     case 'back': {
       const resolvedTabId = await resolveTargetTabId(params.tabId ?? null);
       await chrome.tabs.goBack(resolvedTabId);
