@@ -14,6 +14,11 @@ const toggleTokenBtn = document.getElementById('toggleToken');
 const copyTokenBtn = document.getElementById('copyToken');
 const targetUrlInput = document.getElementById('targetUrlInput');
 const openTargetUrlBtn = document.getElementById('openTargetUrl');
+const uploadFoldersInput = document.getElementById('uploadFoldersInput');
+const uploadDomainsInput = document.getElementById('uploadDomainsInput');
+const uploadExtInput = document.getElementById('uploadExtInput');
+const uploadFileQueryInput = document.getElementById('uploadFileQueryInput');
+const usePreflightCopyInput = document.getElementById('usePreflightCopyInput');
 
 let currentLang = 'en';
 let selectedMode = '';
@@ -185,6 +190,14 @@ async function refreshState() {
     paths: state.paths,
   });
   logBox.textContent = (state.bridgeLog || []).join('\n') || I18N[currentLang].noLogs;
+  if (state.runtime) {
+    const folders = state.runtime.upload?.allowedFolders || state.runtime.allowedUploadFolders || [];
+    const domains = state.runtime.sites?.allowedUploadDomains || state.runtime.allowedUploadDomains || [];
+    const exts = state.runtime.upload?.allowedExtensions || state.runtime.allowedExtensions || [];
+    if (uploadFoldersInput && !uploadFoldersInput.dataset.touched) uploadFoldersInput.value = folders.join(';');
+    if (uploadDomainsInput && !uploadDomainsInput.dataset.touched) uploadDomainsInput.value = domains.join(';');
+    if (uploadExtInput && !uploadExtInput.dataset.touched) uploadExtInput.value = exts.join(';');
+  }
 }
 
 function withRefresh(handler) {
@@ -257,6 +270,70 @@ openTargetUrlBtn.addEventListener('click', withRefresh(async () => {
   if (!url) return;
   const result = await window.desktopApi.navigate({ url });
   statusBox.textContent = formatJson({ navigate: { url, result } });
+}));
+
+for (const id of ['uploadFoldersInput', 'uploadDomainsInput', 'uploadExtInput']) {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('input', () => { el.dataset.touched = '1'; });
+}
+
+document.getElementById('saveUploadPolicy')?.addEventListener('click', withRefresh(async () => {
+  const split = (value) => String(value || '').split(';').map((x) => x.trim()).filter(Boolean);
+  const result = await window.desktopApi.updateUploadPolicy({
+    allowedFolders: split(uploadFoldersInput.value),
+    allowedUploadDomains: split(uploadDomainsInput.value),
+    allowedExtensions: split(uploadExtInput.value),
+  });
+  statusBox.textContent = formatJson({ uploadPolicy: result });
+}));
+
+document.getElementById('findMatchingFiles')?.addEventListener('click', withRefresh(async () => {
+  const result = await window.desktopApi.bridgeAction({
+    action: 'universalFileUploadPreview',
+    params: {
+      fileQuery: uploadFileQueryInput.value.trim(),
+    },
+  });
+  statusBox.textContent = formatJson({ universalFind: result });
+}));
+
+document.getElementById('preflightSelectedFile')?.addEventListener('click', withRefresh(async () => {
+  const result = await window.desktopApi.bridgeAction({
+    action: 'universalFileUploadPreflight',
+    params: {
+      fileQuery: uploadFileQueryInput.value.trim(),
+    },
+  });
+  statusBox.textContent = formatJson({ universalPreflight: result });
+}));
+
+document.getElementById('attachSelectedFile')?.addEventListener('click', withRefresh(async () => {
+  const result = await window.desktopApi.bridgeAction({
+    action: 'universalFileUploadAttach',
+    params: {
+      fileQuery: uploadFileQueryInput.value.trim(),
+      confirmAttach: true,
+      userOwnedCompletedWork: true,
+      allowEducationPlatformUpload: true,
+      usePreflightCopy: !!usePreflightCopyInput?.checked,
+    },
+  });
+  statusBox.textContent = formatJson({ universalAttach: result });
+}));
+
+document.getElementById('attachAndSubmitSelectedFile')?.addEventListener('click', withRefresh(async () => {
+  const result = await window.desktopApi.bridgeAction({
+    action: 'universalFileUploadAttachAndSubmit',
+    params: {
+      fileQuery: uploadFileQueryInput.value.trim(),
+      confirmAttach: true,
+      confirmSubmit: true,
+      userOwnedCompletedWork: true,
+      allowEducationPlatformUpload: true,
+      usePreflightCopy: !!usePreflightCopyInput?.checked,
+    },
+  });
+  statusBox.textContent = formatJson({ universalAttachSubmit: result });
 }));
 
 applyLanguage('en');

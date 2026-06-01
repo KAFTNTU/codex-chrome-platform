@@ -172,15 +172,16 @@ function validateUploadFiles(runtimeConfig, files = [], manualSelectedFiles = fa
 }
 
 function domainAllowedByPolicy(runtimeConfig, siteUrl) {
+  const policy = getUploadPolicy(runtimeConfig);
   let host = '';
   try {
     host = String(new URL(siteUrl).hostname || '').toLowerCase();
   } catch {
     return { ok: false, code: 'POLICY_BLOCKED', message: 'Invalid current site URL.' };
   }
-  const blocked = Array.isArray(runtimeConfig.blockedDomains) ? runtimeConfig.blockedDomains : [];
-  const allowed = Array.isArray(runtimeConfig.allowedUploadDomains) ? runtimeConfig.allowedUploadDomains : [];
-  const allowUnknown = runtimeConfig.allowUnknownDomains === true;
+  const blocked = policy.blockedDomains;
+  const allowed = policy.allowedUploadDomains;
+  const allowUnknown = policy.allowUnknownDomains;
   const blockedHit = blocked.some((d) => host === String(d).toLowerCase() || host.endsWith(`.${String(d).toLowerCase()}`));
   if (blockedHit) return { ok: false, code: 'POLICY_BLOCKED', message: `Domain is blocked: ${host}` };
   if (!allowUnknown && !allowed.some((d) => host === String(d).toLowerCase() || host.endsWith(`.${String(d).toLowerCase()}`))) {
@@ -229,6 +230,107 @@ function findFileByNameInAllowedFolders(runtimeConfig, fileName) {
     }
   }
   return null;
+}
+
+function getUploadPolicy(runtimeConfig) {
+  const upload = runtimeConfig.upload || {};
+  const sites = runtimeConfig.sites || {};
+  const allowedFolders = (upload.allowedFolders && upload.allowedFolders.length
+    ? upload.allowedFolders
+    : runtimeConfig.allowedUploadFolders) || [];
+  const allowedExtensions = (upload.allowedExtensions && upload.allowedExtensions.length
+    ? upload.allowedExtensions
+    : runtimeConfig.allowedExtensions) || [];
+  const maxFileSizeMb = Number(upload.maxFileSizeMb || runtimeConfig.maxFileSizeMb || 50);
+  const allowedUploadDomains = (sites.allowedUploadDomains && sites.allowedUploadDomains.length
+    ? sites.allowedUploadDomains
+    : runtimeConfig.allowedUploadDomains) || [];
+  const blockedDomains = (sites.blockedDomains && sites.blockedDomains.length
+    ? sites.blockedDomains
+    : runtimeConfig.blockedDomains) || [];
+  const allowUnknownDomains = sites.allowUnknownDomains ?? runtimeConfig.allowUnknownDomains ?? false;
+  return {
+    upload,
+    sites,
+    allowedFolders: allowedFolders.map((x) => path.resolve(String(x))),
+    allowedExtensions: allowedExtensions.map((x) => String(x).toLowerCase()),
+    maxFileSizeMb,
+    allowedUploadDomains,
+    blockedDomains,
+    allowUnknownDomains: !!allowUnknownDomains,
+  };
+}
+
+function scanFilesInFolders(folders) {
+  const out = [];
+  const queue = [...folders];
+  let visited = 0;
+  while (queue.length && visited < 12000) {
+    const dir = queue.shift();
+    visited += 1;
+    if (!fs.existsSync(dir)) continue;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(full);
+      } else if (entry.isFile()) {
+        let stat = null;
+        try { stat = fs.statSync(full); } catch { stat = null; }
+        if (!stat) continue;
+        out.push({
+          path: full,
+          name: entry.name,
+          size: stat.size,
+          modifiedAt: stat.mtime.toISOString(),
+          mtimeMs: stat.mtimeMs,
+          folder: path.dirname(full),
+          extension: path.extname(entry.name).toLowerCase(),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function globToRegex(mask) {
+  const escaped = String(mask).replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+function matchFilesByQuery(files, fileQuery, policy, allowMultiple = false) {
+  const q = String(fileQuery || '').trim();
+  if (!q) throw Object.assign(new Error('fileQuery is required'), { bridgeCode: 'INVALID_PARAMS' });
+  let candidates = files.filter((f) => policy.allowedExtensions.includes(f.extension));
+  if (q.toLowerCase() === 'newest') {
+    candidates = candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  } else if (q.toLowerCase().startsWith('newest:')) {
+    const ext = q.slice('newest:'.length).trim().toLowerCase();
+    candidates = candidates.filter((f) => f.extension === ext).sort((a, b) => b.mtimeMs - a.mtimeMs);
+  } else if (q.includes('*') || q.includes('?')) {
+    if (!policy.upload.allowGlobFileSearch) throw Object.assign(new Error('Glob search is disabled by policy'), { bridgeCode: 'POLICY_BLOCKED' });
+    const rx = globToRegex(q);
+    candidates = candidates.filter((f) => rx.test(f.name));
+  } else {
+    const lower = q.toLowerCase();
+    const exact = candidates.filter((f) => f.name.toLowerCase() === lower);
+    if (exact.length) {
+      candidates = exact;
+    } else {
+      if (!policy.upload.allowFuzzyFileSearch) throw Object.assign(new Error('Fuzzy search is disabled by policy'), { bridgeCode: 'POLICY_BLOCKED' });
+      candidates = candidates.filter((f) => f.name.toLowerCase().includes(lower));
+    }
+  }
+  if (!candidates.length) return { status: 'NO_MATCHES', candidates: [] };
+  if (!allowMultiple && candidates.length > 1) {
+    return { status: 'MULTIPLE_MATCHES', candidates: candidates.slice(0, 30) };
+  }
+  return { status: 'OK', candidates: allowMultiple ? candidates : [candidates[0]] };
 }
 
 function saveDataUrlPng(dataUrl, prefix = 'upload') {
@@ -383,6 +485,162 @@ function toCsvWithBom(table) {
 }
 
 async function executeLocalApiAction(action, params = {}) {
+  const aliasAction = {
+    fileUploadAssistantPreview: 'universalFileUploadPreview',
+    fileUploadAssistantAttach: 'universalFileUploadAttach',
+    fileUploadAssistantAttachAndSubmit: 'universalFileUploadAttachAndSubmit',
+  }[action] || action;
+  action = aliasAction;
+  if (!params.fileQuery && params.fileName) {
+    params.fileQuery = params.fileName;
+  }
+
+  if (action === 'universalFileUploadPreflight' || action === 'universalFileUploadPreview') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    if (isLikelyQuizOrTestContext(active)) return errorPayload('POLICY_BLOCKED', 'Quiz/test contexts are blocked.');
+    const policy = getUploadPolicy(runtime);
+    if (!policy.upload.enabled) return errorPayload('POLICY_BLOCKED', 'Upload feature is disabled by policy.');
+    const domain = domainAllowedByPolicy(runtime, active.url);
+    if (!domain.ok) return errorPayload(domain.code, domain.message);
+
+    const allowedFolders = policy.allowedFolders;
+    const files = scanFilesInFolders(allowedFolders);
+    const manualFiles = Array.isArray(params.manualSelectedFiles) ? params.manualSelectedFiles.map((x) => path.resolve(String(x))) : [];
+    const manualEntries = manualFiles.filter((f) => fs.existsSync(f)).map((f) => {
+      const s = fs.statSync(f);
+      return { path: f, name: path.basename(f), size: s.size, modifiedAt: s.mtime.toISOString(), mtimeMs: s.mtimeMs, folder: path.dirname(f), extension: path.extname(f).toLowerCase() };
+    });
+    const pool = [...files, ...manualEntries];
+    const matched = matchFilesByQuery(pool, params.fileQuery, policy, !!params.multiple);
+    if (matched.status === 'NO_MATCHES') return errorPayload('NO_MATCHES', 'No files matched fileQuery.');
+    if (matched.status === 'MULTIPLE_MATCHES') {
+      return errorPayload('MULTIPLE_MATCHES', 'Multiple files matched. Provide more exact fileQuery.', {
+        candidates: matched.candidates.map((f) => ({ name: f.name, size: f.size, modifiedAt: f.modifiedAt, folder: f.folder })),
+      });
+    }
+    const maxBytes = maxFileSizeBytes({ maxFileSizeMb: policy.maxFileSizeMb });
+    const selected = matched.candidates.filter((f) => policy.allowedExtensions.includes(f.extension)).filter((f) => f.size <= maxBytes);
+    if (!selected.length) return errorPayload('POLICY_BLOCKED', 'Matched files do not pass extension/size policy.');
+    const field = await executeRemoteAction('inspectUploadField', { selector: params.selector || 'input[type="file"]', tabId: params.tabId });
+    const screenshot = await executeRemoteAction('screenshot', { tabId: params.tabId });
+    const shotPath = saveDataUrlPng(screenshot?.dataUrl || '', 'universal_preflight');
+    return {
+      ok: true,
+      assistant: 'Universal File Upload Assistant',
+      status: 'ready',
+      site: active.url,
+      fileQuery: params.fileQuery,
+      uploadSelector: params.selector || 'input[type="file"]',
+      uploadField: field,
+      files: selected.map((f) => ({ name: f.name, size: f.size, modifiedAt: f.modifiedAt, folder: f.folder, path: f.path })),
+      screenshotPath: shotPath,
+      logPath: ASSISTIVE_UPLOAD_LOG,
+    };
+  }
+
+  if (action === 'universalFileUploadAttach' || action === 'universalFileUploadAttachAndSubmit' || action === 'universalFileUploadPreflightAttachAndSubmit') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    if (isLikelyQuizOrTestContext(active)) return errorPayload('POLICY_BLOCKED', 'Quiz/test contexts are blocked.');
+    const policy = getUploadPolicy(runtime);
+    if (!policy.upload.enabled) return errorPayload('POLICY_BLOCKED', 'Upload feature is disabled by policy.');
+    const domain = domainAllowedByPolicy(runtime, active.url);
+    if (!domain.ok) return errorPayload(domain.code, domain.message);
+    if (isEducationalUrl(active.url) && params.allowEducationPlatformUpload !== true) {
+      return errorPayload('POLICY_BLOCKED', 'allowEducationPlatformUpload=true is required.');
+    }
+    if (runtime.educationMode?.requireUserOwnedCompletedWorkFlag && !params.userOwnedCompletedWork) {
+      return errorPayload('POLICY_BLOCKED', 'userOwnedCompletedWork=true is required.');
+    }
+    if (!params.confirmAttach) return errorPayload('CONFIRMATION_REQUIRED', 'confirmAttach=true is required.');
+
+    const allowedFolders = policy.allowedFolders;
+    const files = scanFilesInFolders(allowedFolders);
+    const manualFiles = Array.isArray(params.manualSelectedFiles) ? params.manualSelectedFiles.map((x) => path.resolve(String(x))) : [];
+    const manualEntries = manualFiles.filter((f) => fs.existsSync(f)).map((f) => {
+      const s = fs.statSync(f);
+      return { path: f, name: path.basename(f), size: s.size, modifiedAt: s.mtime.toISOString(), mtimeMs: s.mtimeMs, folder: path.dirname(f), extension: path.extname(f).toLowerCase() };
+    });
+    const pool = [...files, ...manualEntries];
+    const matched = matchFilesByQuery(pool, params.fileQuery, policy, !!params.multiple);
+    if (matched.status === 'NO_MATCHES') return errorPayload('NO_MATCHES', 'No files matched fileQuery.');
+    if (matched.status === 'MULTIPLE_MATCHES') {
+      return errorPayload('MULTIPLE_MATCHES', 'Multiple files matched. Provide more exact fileQuery.', {
+        candidates: matched.candidates.map((f) => ({ name: f.name, size: f.size, modifiedAt: f.modifiedAt, folder: f.folder })),
+      });
+    }
+    const maxBytes = maxFileSizeBytes({ maxFileSizeMb: policy.maxFileSizeMb });
+    const selected = matched.candidates.filter((f) => policy.allowedExtensions.includes(f.extension)).filter((f) => f.size <= maxBytes);
+    if (!selected.length) return errorPayload('POLICY_BLOCKED', 'Matched files do not pass extension/size policy.');
+    if (!policy.upload.allowMultipleFiles && selected.length > 1) return errorPayload('POLICY_BLOCKED', 'Multiple file upload is disabled by policy.');
+
+    let uploadFiles = selected.map((f) => f.path);
+    if (params.usePreflightCopy || policy.upload.requirePreflightForSubmit) {
+      ensureOutputDir();
+      uploadFiles = selected.map((f, idx) => {
+        const dest = path.join(OUTPUT_DIR, `preflight_${Date.now()}_${idx}_${f.name}`);
+        fs.copyFileSync(f.path, dest);
+        return dest;
+      });
+    }
+
+    const uploadSelector = params.selector || 'input[type="file"]';
+    const field = await executeRemoteAction('inspectUploadField', { selector: uploadSelector, tabId: params.tabId });
+    if (!field?.found) return errorPayload('POLICY_BLOCKED', 'Upload field not found.');
+    await executeRemoteAction('setFileInputFiles', { selector: uploadSelector, files: uploadFiles, tabId: params.tabId });
+    const attachShot = await executeRemoteAction('screenshot', { tabId: params.tabId });
+    const attachShotPath = saveDataUrlPng(attachShot?.dataUrl || '', 'universal_attach');
+
+    let submitText = '';
+    let submitStatus = 'attached';
+    let submitShotPath = null;
+    if (action !== 'universalFileUploadAttach') {
+      if (!params.confirmSubmit) return errorPayload('CONFIRMATION_REQUIRED', 'confirmSubmit=true is required for submit.');
+      const submitCandidates = ['Submit', 'Send', 'Upload', 'Здати', 'Надіслати', 'Завантажити', 'Відправити'];
+      let submitResult = null;
+      for (const label of submitCandidates) {
+        try {
+          submitResult = await executeRemoteAction('clickByText', { text: label, exact: false, selector: 'button, input[type="submit"], [role="button"]', tabId: params.tabId });
+          submitText = submitResult?.matchedText || label;
+          break;
+        } catch {}
+      }
+      if (!submitResult) {
+        submitResult = await executeRemoteAction('submitForm', { selector: 'input[type="submit"], button[type="submit"]', tabId: params.tabId });
+        submitText = 'submitForm fallback';
+      }
+      submitStatus = 'submitted';
+      const submitShot = await executeRemoteAction('screenshot', { tabId: params.tabId });
+      submitShotPath = saveDataUrlPng(submitShot?.dataUrl || '', 'universal_submit');
+    }
+    appendAssistiveUploadLog({
+      kind: 'assistive_upload_universal',
+      action,
+      site: active.url,
+      fileQuery: params.fileQuery,
+      files: selected.map((f) => ({ name: f.name, size: f.size })),
+      uploadSelector,
+      submitButtonText: submitText,
+      status: submitStatus,
+    });
+    return {
+      ok: true,
+      assistant: 'Universal File Upload Assistant',
+      fileQuery: params.fileQuery,
+      files: selected.map((f) => ({ name: f.name, size: f.size, modifiedAt: f.modifiedAt, folder: f.folder })),
+      site: active.url,
+      uploadSelector,
+      submitButtonText: submitText,
+      status: submitStatus,
+      screenshotPath: {
+        afterAttach: attachShotPath,
+        afterSubmit: submitShotPath,
+      },
+      logPath: ASSISTIVE_UPLOAD_LOG,
+    };
+  }
+
   if (action === 'fileUploadAssistantAttachAndSubmit') {
     const active = latestClient()?.lastTab || null;
     if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');

@@ -32,6 +32,11 @@ const DEFAULT_RUNTIME = {
   allowUnknownDomains: false,
   allowedExtensions: ['.doc', '.docx', '.pdf', '.txt', '.rtf', '.odt', '.zip', '.7z'],
   maxFileSizeMb: 25,
+  sites: {
+    allowedUploadDomains: [],
+    blockedDomains: [],
+    allowUnknownDomains: false,
+  },
   educationMode: {
     enabled: true,
     allowOnlyUserProvidedFiles: true,
@@ -43,6 +48,15 @@ const DEFAULT_RUNTIME = {
   },
   upload: {
     allowAttachAndSubmit: true,
+    enabled: true,
+    allowedFolders: [],
+    allowedExtensions: ['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.csv', '.txt', '.png', '.jpg', '.jpeg', '.webp', '.zip'],
+    maxFileSizeMb: 50,
+    allowFuzzyFileSearch: true,
+    allowGlobFileSearch: true,
+    allowNewestFileFromFolder: true,
+    allowMultipleFiles: true,
+    requirePreflightForSubmit: true,
   },
   actions: {
     allowAttachFile: true,
@@ -179,6 +193,11 @@ function normalizeActionName(action) {
     file_upload_assistant_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
     document_attachment_assistant_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
     personal_upload_helper_attach_and_submit: 'fileUploadAssistantAttachAndSubmit',
+    universal_file_upload_preflight: 'universalFileUploadPreflight',
+    universal_file_upload_preview: 'universalFileUploadPreview',
+    universal_file_upload_attach: 'universalFileUploadAttach',
+    universal_file_upload_attach_and_submit: 'universalFileUploadAttachAndSubmit',
+    universal_file_upload_preflight_attach_and_submit: 'universalFileUploadPreflightAttachAndSubmit',
     download_file: 'downloadUrl',
     run_action_queue: 'runActionQueue',
   };

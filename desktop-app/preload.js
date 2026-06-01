@@ -9,5 +9,7 @@ contextBridge.exposeInMainWorld('desktopApi', {
   quickAction: (action) => ipcRenderer.invoke('desktop:quick-action', action),
   navigate: (payload) => ipcRenderer.invoke('desktop:navigate', payload),
   setConnection: (payload) => ipcRenderer.invoke('desktop:set-connection', payload),
+  updateUploadPolicy: (payload) => ipcRenderer.invoke('desktop:update-upload-policy', payload),
+  bridgeAction: (payload) => ipcRenderer.invoke('desktop:bridge-action', payload),
   openPath: (target) => ipcRenderer.invoke('desktop:open-path', target),
 });

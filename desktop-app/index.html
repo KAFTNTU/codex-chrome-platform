@@ -108,6 +108,39 @@
           <button data-open="macrosPath" data-i18n="openMacros">Open macros folder</button>
         </div>
       </article>
+
+      <article class="panel group">
+        <h2>Universal File Upload Assistant</h2>
+        <div class="connection-grid">
+          <label>
+            <span>Upload Queue folders</span>
+            <input id="uploadFoldersInput" placeholder="C:\Users\Admin\Documents;C:\Users\Admin\Desktop" />
+          </label>
+          <label>
+            <span>Allowed domains</span>
+            <input id="uploadDomainsInput" placeholder="dl.tntu.edu.ua;example.com" />
+          </label>
+          <label>
+            <span>Allowed extensions</span>
+            <input id="uploadExtInput" placeholder=".pdf;.docx;.xlsx;.jpg" />
+          </label>
+          <label>
+            <span>File query input</span>
+            <input id="uploadFileQueryInput" placeholder="newest:.pdf | report.docx | *.jpg | звіт" />
+          </label>
+        </div>
+        <label class="checkbox-row">
+          <input id="usePreflightCopyInput" type="checkbox" checked />
+          <span>Use preflight copy</span>
+        </label>
+        <div class="buttons stack">
+          <button id="saveUploadPolicy">Save upload policy</button>
+          <button id="findMatchingFiles">Find matching files</button>
+          <button id="preflightSelectedFile">Preflight selected file</button>
+          <button id="attachSelectedFile">Attach selected file</button>
+          <button id="attachAndSubmitSelectedFile">Attach &amp; Submit selected file</button>
+        </div>
+      </article>
     </section>
 
     <section class="panel">

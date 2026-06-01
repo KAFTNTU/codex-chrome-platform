@@ -43,6 +43,11 @@ function readRuntime() {
   }
 }
 
+function writeRuntime(nextRuntime) {
+  ensureDirs();
+  fs.writeFileSync(RUNTIME_PATH, JSON.stringify(nextRuntime, null, 2), 'utf8');
+}
+
 function loadLauncherConfig() {
   try {
     if (!fs.existsSync(LAUNCHER_PATH)) return { bridgeUrl: DEFAULT_BRIDGE_URL, tokenOverride: '', autoStartBridge: true };
@@ -164,6 +169,11 @@ ipcMain.handle('desktop:get-state', async () => {
           developerModeEnabled: !!runtime.developerModeEnabled,
           localNetworkEnabled: !!runtime.localNetworkEnabled,
           tokenMasked: runtime.token ? `${runtime.token.slice(0, 4)}...${runtime.token.slice(-4)}` : '',
+          upload: runtime.upload || null,
+          sites: runtime.sites || null,
+          allowedUploadFolders: runtime.allowedUploadFolders || [],
+          allowedUploadDomains: runtime.allowedUploadDomains || [],
+          allowedExtensions: runtime.allowedExtensions || [],
         }
       : null,
     launcher: {
@@ -274,6 +284,41 @@ ipcMain.handle('desktop:set-connection', async (_event, payload) => {
   };
   saveLauncherConfig(next);
   return { ok: true, launcher: launcherConfig };
+});
+
+ipcMain.handle('desktop:update-upload-policy', async (_event, payload) => {
+  const runtime = readRuntime() || {};
+  runtime.upload ||= {};
+  runtime.sites ||= {};
+  runtime.upload.enabled = true;
+  runtime.upload.allowedFolders = Array.isArray(payload?.allowedFolders) ? payload.allowedFolders : (runtime.upload.allowedFolders || []);
+  runtime.upload.allowedExtensions = Array.isArray(payload?.allowedExtensions) ? payload.allowedExtensions : (runtime.upload.allowedExtensions || []);
+  runtime.sites.allowedUploadDomains = Array.isArray(payload?.allowedUploadDomains) ? payload.allowedUploadDomains : (runtime.sites.allowedUploadDomains || []);
+  writeRuntime(runtime);
+  return { ok: true, runtime };
+});
+
+ipcMain.handle('desktop:bridge-action', async (_event, payload) => {
+  const token = getBridgeToken();
+  if (!token) {
+    return { ok: false, error: { code: 'TOKEN_REQUIRED', message: 'Token is missing in runtime.json' } };
+  }
+  const action = String(payload?.action || '').trim();
+  if (!action) return { ok: false, error: { code: 'INVALID_PARAMS', message: 'action is required' } };
+  const res = await fetch(`${getBridgeUrl()}/api/action`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Bridge-Token': token,
+    },
+    body: JSON.stringify({
+      action,
+      params: payload?.params || {},
+      token,
+      waitMs: Number(payload?.waitMs || 25000),
+    }),
+  });
+  return await res.json();
 });
 
 ipcMain.handle('desktop:open-path', async (_event, target) => {
