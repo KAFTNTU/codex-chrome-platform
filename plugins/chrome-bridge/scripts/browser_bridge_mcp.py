@@ -19,6 +19,7 @@ TOOLS = [
     {"name":"chrome_bridge_recent_tabs","description":"List recently accessed Chrome tabs.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_switch_tab","description":"Activate a Chrome tab by its id.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"required":["tabId"],"additionalProperties":False}},
     {"name":"chrome_bridge_open_tab","description":"Open a new Chrome tab.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"active":{"type":"boolean"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_search_web","description":"Open a new tab or navigate the current tab to a web search or direct URL.","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"engine":{"type":"string","enum":["bing","google","duckduckgo","ddg","yahoo","brave"]},"newTab":{"type":"boolean"},"active":{"type":"boolean"},"timeoutMs":{"type":"integer"},"titleContains":{"type":"string"},"urlContains":{"type":"string"},"tabId":{"type":"integer"}},"required":["query"],"additionalProperties":False}},
     {"name":"chrome_bridge_create_tab_group","description":"Open a new tab and place it into a Codex tab group workspace.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"active":{"type":"boolean"},"title":{"type":"string"},"color":{"type":"string"},"collapsed":{"type":"boolean"}},"additionalProperties":False}},
     {"name":"chrome_bridge_open_in_codex_workspace","description":"Open a new tab and add it to the existing Codex workspace group, or create the group if needed.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"active":{"type":"boolean"},"title":{"type":"string"},"color":{"type":"string"},"collapsed":{"type":"boolean"}},"additionalProperties":False}},
     {"name":"chrome_bridge_get_tab_workspace_state","description":"Return the current Codex tab workspace group state.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
@@ -152,6 +153,15 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         return as_text_content(call_bridge("recentTabs",payload))
     if name=="chrome_bridge_switch_tab": return as_text_content(call_bridge("switchTab",{"tabId":int(arguments["tabId"])}))
     if name=="chrome_bridge_open_tab": return as_text_content(call_bridge("openNewTab",{"url":arguments.get("url","about:blank"),"active":bool(arguments.get("active",True))}))
+    if name=="chrome_bridge_search_web":
+        payload={"query":arguments["query"]}
+        for field in ("engine","titleContains","urlContains"):
+            if field in arguments: payload[field]=arguments[field]
+        for field in ("newTab","active"):
+            if field in arguments: payload[field]=bool(arguments[field])
+        if "timeoutMs" in arguments: payload["timeoutMs"]=int(arguments["timeoutMs"])
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("searchWeb",payload))
     if name=="chrome_bridge_create_tab_group":
         payload={"url":arguments.get("url","about:blank"),"active":bool(arguments.get("active",True))}
         if "title" in arguments: payload["title"]=arguments["title"]

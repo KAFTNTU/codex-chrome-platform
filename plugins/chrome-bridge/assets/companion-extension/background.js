@@ -1205,6 +1205,42 @@ async function openNewTab(url = 'about:blank', active = true) {
   return serializeTab(tab);
 }
 
+function looksLikeUrl(text) {
+  const value = String(text || '').trim();
+  if (!value) return false;
+  if (/^https?:\/\//i.test(value)) return true;
+  if (/\s/.test(value)) return false;
+  return /[.]/.test(value) && /[a-z0-9-]+\.[a-z]{2,}/i.test(value);
+}
+
+function buildSearchUrl(query, engine = 'bing') {
+  const q = encodeURIComponent(String(query || '').trim());
+  const normalizedEngine = String(engine || 'bing').trim().toLowerCase();
+  const map = {
+    bing: `https://www.bing.com/search?q=${q}`,
+    google: `https://www.google.com/search?q=${q}`,
+    duckduckgo: `https://duckduckgo.com/?q=${q}`,
+    ddg: `https://duckduckgo.com/?q=${q}`,
+    yahoo: `https://search.yahoo.com/search?p=${q}`,
+    brave: `https://search.brave.com/search?q=${q}`,
+  };
+  return map[normalizedEngine] || map.bing;
+}
+
+async function searchWeb(query, options = {}, tabId = null) {
+  const term = String(query || '').trim();
+  if (!term) throw new Error('query is required');
+  const url = looksLikeUrl(term) ? (term.startsWith('http://') || term.startsWith('https://') ? term : `https://${term}`) : buildSearchUrl(term, options.engine || 'bing');
+  if (options.newTab !== false) {
+    return await openNewTab(url, options.active !== false);
+  }
+  return await navigateAndWait(url, {
+    timeoutMs: options.timeoutMs || 15000,
+    titleContains: options.titleContains || null,
+    urlContains: options.urlContains || null,
+  }, tabId);
+}
+
 async function createCodexTabGroup(url = 'about:blank', options = {}) {
   const tab = await chrome.tabs.create({ url, active: options.active !== false });
   const groupId = await createWorkspaceGroupForTab(tab.id, options);
@@ -1542,6 +1578,15 @@ async function handleCommand(command) {
       return await switchTab(params.tabId);
     case 'openNewTab':
       return await openNewTab(params.url || 'about:blank', params.active !== false);
+    case 'searchWeb':
+      return await searchWeb(params.query || params.text || params.search || params.url || '', {
+        engine: params.engine || 'bing',
+        newTab: params.newTab !== false,
+        active: params.active !== false,
+        timeoutMs: params.timeoutMs || 15000,
+        titleContains: params.titleContains || null,
+        urlContains: params.urlContains || null,
+      }, params.tabId ?? null);
     case 'createCodexTabGroup':
       return await createCodexTabGroup(params.url || 'about:blank', params);
     case 'openInCodexWorkspace':

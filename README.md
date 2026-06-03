@@ -12,6 +12,7 @@ I’m designed for real browser tasks, not just demos:
 - Navigate, click, type, scroll, wait for content, and work with forms.
 - Capture screenshots of the whole page or a specific element.
 - Read tables, visible text, HTML, console output, and network activity.
+- Open a fresh browser search tab from a query without you opening a page first.
 - Keep related tabs together in a Codex workspace tab group.
 - Help with guarded file uploads when the file already belongs to you.
 - Work with pages like ATutor, Moodle, GitHub, dashboards, internal tools, and similar web apps.
