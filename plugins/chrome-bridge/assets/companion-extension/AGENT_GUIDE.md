@@ -8,6 +8,7 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Inspect the active Chrome / Edge tab in real time.
 - Read visible text, HTML, screenshots, tables, console logs, and network events.
 - Navigate tabs, click, type, scroll, select, and work with forms.
+- When the bridge is connected, search and navigation should happen in the user's personal Chrome / Edge session, not the in-app browser.
 - Create and maintain a Codex tab workspace group for related tabs.
 - Use guarded file upload flows for files the user already owns.
 - Work with ATutor, Moodle, GitHub, forms, dashboards, and similar browser apps.
@@ -83,6 +84,7 @@ If an AI agent is asked to make the bridge start automatically, it should do the
 ## What the AI should remember
 
 - The bridge can auto-start only if the browser is launched.
+- The bridge is meant to control the real browser session; do not route user-facing search or navigation into the in-app browser when the companion extension is connected.
 - The extension can start the native host, but it cannot bypass OS registration.
 - The extension ID is required in `allowed_origins`.
 - Client ID and bridge token are not the same thing as extension ID.

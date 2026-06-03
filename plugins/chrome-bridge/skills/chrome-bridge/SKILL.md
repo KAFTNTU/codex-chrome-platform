@@ -6,6 +6,7 @@ description: Use the local Chrome Bridge plugin to inspect and control the activ
 # Chrome Bridge
 
 Use this plugin when the user wants Codex to work with their real Chrome tab instead of only the in-app browser.
+When the bridge is connected, prefer the user's personal Chrome / Edge session for search and navigation.
 
 ## What this plugin expects
 
@@ -64,6 +65,7 @@ That file explains:
 - Prefer `chrome_bridge_status` first if connection is uncertain.
 - For interaction flows, use the smallest destructive action possible.
 - If the bridge is disconnected, tell the user to start the bridge server and ensure the extension popup says `Connected`.
+- Do not send user-facing search or navigation flows to the in-app browser when the bridge is available; use the real browser session instead.
 - After changing `assets/companion-extension`, reload the unpacked extension in `chrome://extensions` so the service worker picks up the new code.
 - For folder-only usage, prefer `npm run bridge:autostart` so the server survives browser restarts on Windows, macOS, and Linux.
 - When creating many related tabs, use the workspace tab group tools instead of opening isolated tabs.

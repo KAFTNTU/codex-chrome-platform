@@ -13,6 +13,7 @@ I’m designed for real browser tasks, not just demos:
 - Capture screenshots of the whole page or a specific element.
 - Read tables, visible text, HTML, console output, and network activity.
 - Open a fresh browser search tab from a query without you opening a page first.
+- When the bridge is connected, I work in your personal Chrome / Edge browser session, not the in-app browser.
 - Keep related tabs together in a Codex workspace tab group.
 - Help with guarded file uploads when the file already belongs to you.
 - Work with pages like ATutor, Moodle, GitHub, dashboards, internal tools, and similar web apps.
