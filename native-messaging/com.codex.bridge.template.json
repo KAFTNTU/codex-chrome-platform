@@ -1,0 +1,9 @@
+{
+  "name": "com.codex.bridge",
+  "description": "Local bridge for Codex MCP",
+  "path": "__LAUNCHER_PATH__",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://__EXTENSION_ID__/"
+  ]
+}

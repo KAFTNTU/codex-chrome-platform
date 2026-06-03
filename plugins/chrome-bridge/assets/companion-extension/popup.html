@@ -139,6 +139,26 @@
       width: auto;
       margin: 0;
     }
+    .profile-select {
+      flex: 1;
+      min-width: 0;
+      padding: 7px 9px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+    }
+    .profile-button {
+      flex: 1;
+      min-width: 0;
+      text-align: center;
+      font-weight: 600;
+    }
+    .profile-button.active {
+      background: #21455f;
+      border-color: #4f89b9;
+      color: #f4fbff;
+    }
   </style>
 </head>
 <body>
@@ -161,6 +181,14 @@
           <input id="bridgeToken" />
           <button id="saveToken">Save token</button>
         </div>
+      </div>
+      <div class="row">
+        <div class="sub">Access profile</div>
+        <div class="inline">
+          <button id="controlledProfile" class="profile-button">Controlled</button>
+          <button id="expandedProfile" class="profile-button">Expanded</button>
+        </div>
+        <div class="sub">Expanded combines developer and local network capabilities, but sensitive steps still ask for confirmation.</div>
       </div>
       <div class="row">
         <label class="toggle">

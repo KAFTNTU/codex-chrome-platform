@@ -10,9 +10,21 @@ Use this plugin when the user wants Codex to work with their real Chrome tab ins
 ## What this plugin expects
 
 1. The companion localhost bridge is running:
-   - `node ./plugins/chrome-bridge/scripts/bridge_hub.js`
+   - `node ./scripts/bridge_autostart.js`
+   - or `node ./plugins/chrome-bridge/scripts/bridge_hub.js` for direct start
 2. The companion Chrome extension from `assets/companion-extension/` is loaded with `Load unpacked`.
 3. The extension popup shows `Connected`.
+
+## Agent Guide
+
+For a compact human-readable guide, see:
+- `plugins/chrome-bridge/assets/companion-extension/AGENT_GUIDE.md`
+
+That file explains:
+- what the extension can do
+- what other desktop AIs can safely do with it
+- what is blocked by design
+- how to use the bridge from browser and MCP workflows
 
 ## What the MCP side exposes
 
@@ -21,6 +33,10 @@ Use this plugin when the user wants Codex to work with their real Chrome tab ins
 - `chrome_bridge_list_tabs`: list open tabs
 - `chrome_bridge_switch_tab`: activate a tab by id
 - `chrome_bridge_open_tab`: open a new tab
+- `chrome_bridge_create_tab_group`: open a new tab inside a Codex tab workspace
+- `chrome_bridge_open_in_codex_workspace`: open a new tab and add it to the workspace group
+- `chrome_bridge_get_tab_workspace_state`: inspect the workspace group
+- `chrome_bridge_add_active_tab_to_workspace`: move the active tab into the workspace group
 - `chrome_bridge_close_tab`: close a tab
 - `chrome_bridge_extract_text`: visible page text
 - `chrome_bridge_extract_html`: page HTML
@@ -40,6 +56,8 @@ Use this plugin when the user wants Codex to work with their real Chrome tab ins
 - `chrome_bridge_back`: go back in history
 - `chrome_bridge_forward`: go forward in history
 - `chrome_bridge_reload`: reload the current tab
+- `chrome_bridge_file_upload_assistant_*`: guarded file attachment flows for user-owned files
+- `chrome_bridge_universal_file_upload_*`: universal guarded file lookup/attach/preflight flows
 
 ## Guidance
 
@@ -47,3 +65,26 @@ Use this plugin when the user wants Codex to work with their real Chrome tab ins
 - For interaction flows, use the smallest destructive action possible.
 - If the bridge is disconnected, tell the user to start the bridge server and ensure the extension popup says `Connected`.
 - After changing `assets/companion-extension`, reload the unpacked extension in `chrome://extensions` so the service worker picks up the new code.
+- For folder-only usage, prefer `npm run bridge:autostart` so the server survives browser restarts on Windows, macOS, and Linux.
+- When creating many related tabs, use the workspace tab group tools instead of opening isolated tabs.
+
+## Auto-start Checklist for the Bridge
+
+When the user wants the bridge to start automatically, follow this checklist:
+
+1. Add `nativeMessaging` to the extension permissions.
+2. Create the native host manifest `com.codex.bridge`.
+3. Point the native host `path` to `scripts/start-bridge.bat` on Windows or `scripts/start-bridge.sh` on macOS/Linux.
+4. Put the correct extension ID into `allowed_origins`.
+5. Register the host manifest with the OS.
+6. Call `chrome.runtime.connectNative('com.codex.bridge')` from `runtime.onStartup` and `runtime.onInstalled`.
+7. Keep a reconnect/backoff loop for host disconnects.
+8. Reload the unpacked extension after any manifest change.
+9. Confirm the popup reports `Connected`.
+
+Do not confuse:
+- `extension ID`
+- `client ID`
+- `bridge token`
+
+Only the extension ID belongs in the native host manifest `allowed_origins`.

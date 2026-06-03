@@ -20,6 +20,8 @@ const DEFAULT_RUNTIME = {
   developerModeEnabled: false,
   localNetworkEnabled: false,
   token: '',
+  tokenAuthEnabled: true,
+  acceptedTokens: [],
   sensitiveDomains: SENSITIVE_DOMAINS,
   blockedDomains: [],
   confirmations: {},
@@ -104,6 +106,11 @@ function loadRuntime() {
     }
   }
   if (!runtime.token) {
+    if (runtime.tokenAuthEnabled === false) {
+      runtime.token = '';
+      saveRuntime(runtime);
+      return runtime;
+    }
     runtime.token = generateToken();
     saveRuntime(runtime);
   }
@@ -116,12 +123,13 @@ function saveRuntime(runtime) {
 }
 
 function getPermissionsForMode(runtime) {
-  const developer = runtime.mode === 'developer' && runtime.developerModeEnabled;
+  const developer = (runtime.mode === 'developer' && runtime.developerModeEnabled) || runtime.mode === 'expanded';
+  const localNetwork = !!runtime.localNetworkEnabled || runtime.mode === 'expanded';
   return {
     cookies: developer,
     debugger: developer,
     runScript: developer,
-    localNetwork: !!runtime.localNetworkEnabled,
+    localNetwork,
   };
 }
 
@@ -170,6 +178,13 @@ function normalizeActionName(action) {
     ensure_ato_context: 'ensureAtoContext',
     reading_scroll_session: 'readingScrollSession',
     open_tab: 'openNewTab',
+    create_tab_group: 'createCodexTabGroup',
+    create_codex_tab_group: 'createCodexTabGroup',
+    open_in_codex_workspace: 'openInCodexWorkspace',
+    workspace_open_tab: 'openInCodexWorkspace',
+    get_tab_workspace_state: 'getTabWorkspaceState',
+    tab_workspace_state: 'getTabWorkspaceState',
+    add_active_tab_to_workspace: 'addActiveTabToWorkspace',
     wait_for_text: 'waitForText',
     wait_until_text: 'waitForText',
     element_screenshot: 'elementScreenshot',

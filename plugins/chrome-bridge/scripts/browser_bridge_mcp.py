@@ -19,6 +19,10 @@ TOOLS = [
     {"name":"chrome_bridge_recent_tabs","description":"List recently accessed Chrome tabs.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_switch_tab","description":"Activate a Chrome tab by its id.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"required":["tabId"],"additionalProperties":False}},
     {"name":"chrome_bridge_open_tab","description":"Open a new Chrome tab.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"active":{"type":"boolean"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_create_tab_group","description":"Open a new tab and place it into a Codex tab group workspace.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"active":{"type":"boolean"},"title":{"type":"string"},"color":{"type":"string"},"collapsed":{"type":"boolean"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_open_in_codex_workspace","description":"Open a new tab and add it to the existing Codex workspace group, or create the group if needed.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"active":{"type":"boolean"},"title":{"type":"string"},"color":{"type":"string"},"collapsed":{"type":"boolean"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_get_tab_workspace_state","description":"Return the current Codex tab workspace group state.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_add_active_tab_to_workspace","description":"Add the active tab to the current Codex workspace group.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"},"title":{"type":"string"},"color":{"type":"string"},"collapsed":{"type":"boolean"}},"additionalProperties":False}},
     {"name":"chrome_bridge_close_tab","description":"Close a Chrome tab by id or the current active tab.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_extract_text","description":"Extract visible page text from the active tab.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_extract_html","description":"Extract page HTML from the active tab.","inputSchema":{"type":"object","properties":{"maxLength":{"type":"integer","description":"Maximum number of HTML characters to return."}},"additionalProperties":False}},
@@ -148,6 +152,26 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         return as_text_content(call_bridge("recentTabs",payload))
     if name=="chrome_bridge_switch_tab": return as_text_content(call_bridge("switchTab",{"tabId":int(arguments["tabId"])}))
     if name=="chrome_bridge_open_tab": return as_text_content(call_bridge("openNewTab",{"url":arguments.get("url","about:blank"),"active":bool(arguments.get("active",True))}))
+    if name=="chrome_bridge_create_tab_group":
+        payload={"url":arguments.get("url","about:blank"),"active":bool(arguments.get("active",True))}
+        if "title" in arguments: payload["title"]=arguments["title"]
+        if "color" in arguments: payload["color"]=arguments["color"]
+        if "collapsed" in arguments: payload["collapsed"]=bool(arguments["collapsed"])
+        return as_text_content(call_bridge("createCodexTabGroup",payload))
+    if name=="chrome_bridge_open_in_codex_workspace":
+        payload={"url":arguments.get("url","about:blank"),"active":bool(arguments.get("active",True))}
+        if "title" in arguments: payload["title"]=arguments["title"]
+        if "color" in arguments: payload["color"]=arguments["color"]
+        if "collapsed" in arguments: payload["collapsed"]=bool(arguments["collapsed"])
+        return as_text_content(call_bridge("openInCodexWorkspace",payload))
+    if name=="chrome_bridge_get_tab_workspace_state": return as_text_content(call_bridge("getTabWorkspaceState"))
+    if name=="chrome_bridge_add_active_tab_to_workspace":
+        payload={}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        if "title" in arguments: payload["title"]=arguments["title"]
+        if "color" in arguments: payload["color"]=arguments["color"]
+        if "collapsed" in arguments: payload["collapsed"]=bool(arguments["collapsed"])
+        return as_text_content(call_bridge("addActiveTabToWorkspace",payload))
     if name=="chrome_bridge_close_tab":
         payload={}
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])

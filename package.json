@@ -1,12 +1,13 @@
 {
   "name": "codex-chrome-platform",
-  "version": "0.3.0",
-  "description": "Local browser automation platform with Chrome Bridge, MCP, Local API, and desktop launcher.",
+  "version": "0.4.3",
+  "description": "Local browser automation platform with Chrome Bridge, MCP, Local API, native messaging, and cross-platform bridge autostart.",
   "main": "desktop-app/main.js",
   "private": true,
   "scripts": {
-    "dev": "npm run desktop",
-    "start-bridge": "node ./plugins/chrome-bridge/scripts/bridge_hub.js",
+    "dev": "npm run bridge:autostart",
+    "bridge:start": "node ./plugins/chrome-bridge/scripts/bridge_hub.js",
+    "bridge:autostart": "node ./scripts/bridge_autostart.js",
     "desktop": "electron ./desktop-app/main.js",
     "build:win": "electron-builder --win nsis"
   },

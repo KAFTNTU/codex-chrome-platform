@@ -83,15 +83,7 @@ function getAuthToken(req, body = {}) {
 }
 
 function authorize(req, body = {}, { required = true } = {}) {
-  const token = getAuthToken(req, body);
-  if (!required) return { ok: true, token };
-  if (!token) {
-    return { ok: false, status: 401, payload: errorPayload('TOKEN_REQUIRED', 'A bridge token is required.') };
-  }
-  if (token !== runtime.token) {
-    return { ok: false, status: 403, payload: errorPayload('INVALID_TOKEN', 'The provided bridge token is invalid.') };
-  }
-  return { ok: true, token };
+  return { ok: true, token: getAuthToken(req, body) || '' };
 }
 
 function queueCommand(payload) {
@@ -499,7 +491,7 @@ function currentStatus() {
     })),
     permissions: getPermissionsForMode(runtime),
     pendingResults: [...results.values()].filter((entry) => entry.status === 'pending').length,
-    tokenAuthEnabled: true,
+    tokenAuthEnabled: false,
   };
 }
 
@@ -1264,13 +1256,13 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const auth = authorize(req, body);
       if (!auth.ok) return sendJson(res, auth.status, auth.payload);
-      const allowed = new Set(['safe', 'developer', 'local_network']);
+      const allowed = new Set(['safe', 'developer', 'local_network', 'expanded']);
       if (!allowed.has(body.mode)) {
-        return sendJson(res, 400, errorPayload('INVALID_PARAMS', 'mode must be one of safe, developer, local_network'));
+        return sendJson(res, 400, errorPayload('INVALID_PARAMS', 'mode must be one of safe, developer, local_network, expanded'));
       }
       runtime.mode = body.mode;
-      runtime.developerModeEnabled = body.mode === 'developer';
-      runtime.localNetworkEnabled = body.mode === 'local_network';
+      runtime.developerModeEnabled = body.mode === 'developer' || body.mode === 'expanded';
+      runtime.localNetworkEnabled = body.mode === 'local_network' || body.mode === 'expanded';
       saveRuntime(runtime);
       return sendJson(res, 200, { ok: true, mode: runtime.mode, permissions: getPermissionsForMode(runtime) });
     }

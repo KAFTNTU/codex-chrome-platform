@@ -1,6 +1,7 @@
 let currentTabId = null;
 let pollTimer = null;
 let noticeTimer = null;
+let currentAccessProfile = 'controlled';
 
 function el(id) {
   return document.getElementById(id);
@@ -18,6 +19,14 @@ function renderStatus(bridgeState) {
   el('statusPill').textContent = connected ? 'Connected' : 'Disconnected';
   el('statusPill').className = `pill ${connected ? 'ok' : 'bad'}`;
   el('error').textContent = bridgeState?.lastError || '-';
+}
+
+function renderAccessProfile(profile) {
+  currentAccessProfile = profile === 'expanded' ? 'expanded' : 'controlled';
+  const controlled = el('controlledProfile');
+  const expanded = el('expandedProfile');
+  controlled.classList.toggle('active', currentAccessProfile === 'controlled');
+  expanded.classList.toggle('active', currentAccessProfile === 'expanded');
 }
 
 function renderActiveTab(activeTab) {
@@ -133,6 +142,7 @@ async function refresh() {
     el('clientId').textContent = state.clientId || '-';
     el('serverUrl').value = state.serverUrl || 'http://127.0.0.1:17373';
     el('bridgeToken').value = state.bridgeToken || '';
+    renderAccessProfile(state.accessProfile || 'controlled');
     el('mouseCueEnabled').checked = state.mouseCueEnabled !== false;
     renderStatus(state.bridgeState);
     renderActiveTab(state.activeTab);
@@ -168,6 +178,19 @@ async function saveToken() {
     await chrome.runtime.sendMessage({
       type: 'popup-save-token',
       bridgeToken: el('bridgeToken').value.trim(),
+    });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
+  await refresh();
+}
+
+async function saveAccessProfile() {
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'popup-save-access-profile',
+      accessProfile: currentAccessProfile,
     });
   } catch (error) {
     showNotice(error.message || String(error), true);
@@ -221,6 +244,14 @@ async function clearMonitor() {
 
 el('save').addEventListener('click', saveServerUrl);
 el('saveToken').addEventListener('click', saveToken);
+el('controlledProfile').addEventListener('click', async () => {
+  currentAccessProfile = 'controlled';
+  await saveAccessProfile();
+});
+el('expandedProfile').addEventListener('click', async () => {
+  currentAccessProfile = 'expanded';
+  await saveAccessProfile();
+});
 el('mouseCueEnabled').addEventListener('change', saveMouseCueEnabled);
 el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);

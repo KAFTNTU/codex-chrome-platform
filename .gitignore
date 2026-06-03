@@ -1,5 +1,9 @@
 node_modules/
 dist/
+dist-new/
+dist-packager/
+dist-packager-fresh/
+dist-packager-v2/
 temp/
 logs/
 output/

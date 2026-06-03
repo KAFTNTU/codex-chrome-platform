@@ -5,6 +5,9 @@ const MAX_NETWORK_LOG = 120;
 const MAX_CONSOLE_LOG = 120;
 const MAX_SESSION_MEMORY = 80;
 const MAX_RESPONSE_BODY = 200000;
+const HEARTBEAT_ALARM = 'bridge-heartbeat';
+const POLL_ALARM = 'bridge-poll';
+const NATIVE_HOST_NAME = 'com.codex.bridge';
 
 let state = {
   connected: false,
@@ -12,9 +15,20 @@ let state = {
   lastError: null,
   serverUrl: DEFAULT_SERVER,
   bridgeToken: '',
+  accessProfile: 'controlled',
   mode: 'safe',
   mouseCueEnabled: true,
+  workspaceGroupId: null,
+  workspaceGroupTitle: 'Codex Agent Workspace',
+  workspaceGroupColor: 'blue',
 };
+let nativeBridgePort = null;
+let nativeBridgeReconnectTimer = null;
+let nativeBridgeBackoffMs = 1000;
+let stateLoaded = false;
+let warmupInFlight = null;
+let lastHeartbeatAt = 0;
+let lastPollAt = 0;
 let commandLog = [];
 let networkState = {
   attachedTabId: null,
@@ -38,18 +52,33 @@ let macroState = {
 let namedRecipes = {};
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'bridgeToken', 'namedRecipes', 'mouseCueEnabled']);
+  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'bridgeToken', 'namedRecipes', 'mouseCueEnabled', 'workspaceGroupId', 'workspaceGroupTitle', 'workspaceGroupColor', 'accessProfile']);
   state.clientId = stored.clientId || crypto.randomUUID();
   state.serverUrl = stored.serverUrl || DEFAULT_SERVER;
   state.bridgeToken = stored.bridgeToken || '';
+  state.accessProfile = stored.accessProfile || 'controlled';
   state.mouseCueEnabled = stored.mouseCueEnabled !== false;
+  state.workspaceGroupId = Number.isFinite(Number(stored.workspaceGroupId)) ? Number(stored.workspaceGroupId) : null;
+  state.workspaceGroupTitle = stored.workspaceGroupTitle || 'Codex Agent Workspace';
+  state.workspaceGroupColor = stored.workspaceGroupColor || 'blue';
   namedRecipes = stored.namedRecipes || {};
   await chrome.storage.local.set({
     clientId: state.clientId,
     serverUrl: state.serverUrl,
     bridgeToken: state.bridgeToken,
+    accessProfile: state.accessProfile,
     mouseCueEnabled: state.mouseCueEnabled,
+    workspaceGroupId: state.workspaceGroupId,
+    workspaceGroupTitle: state.workspaceGroupTitle,
+    workspaceGroupColor: state.workspaceGroupColor,
   });
+  stateLoaded = true;
+}
+
+async function ensureStateLoaded() {
+  if (!stateLoaded) {
+    await loadState();
+  }
 }
 
 async function persistRecipes() {
@@ -62,6 +91,154 @@ async function persistBridgeState() {
   } catch {
     // Ignore transient storage failures during service worker restarts.
   }
+}
+
+async function persistWorkspaceState() {
+  try {
+    await chrome.storage.local.set({
+      workspaceGroupId: state.workspaceGroupId,
+      workspaceGroupTitle: state.workspaceGroupTitle,
+      workspaceGroupColor: state.workspaceGroupColor,
+      accessProfile: state.accessProfile,
+    });
+  } catch {
+    // Ignore transient storage failures.
+  }
+}
+
+function scheduleNativeBridgeReconnect() {
+  if (nativeBridgeReconnectTimer) return;
+  nativeBridgeReconnectTimer = setTimeout(() => {
+    nativeBridgeReconnectTimer = null;
+    void connectNativeBridge().catch(() => {});
+  }, nativeBridgeBackoffMs);
+  nativeBridgeBackoffMs = Math.min(Math.max(1000, nativeBridgeBackoffMs * 2), 30000);
+}
+
+async function connectNativeBridge() {
+  await ensureStateLoaded();
+  if (nativeBridgePort) return nativeBridgePort;
+  try {
+    const port = chrome.runtime.connectNative(NATIVE_HOST_NAME);
+    nativeBridgePort = port;
+    nativeBridgeBackoffMs = 1000;
+    port.onMessage.addListener((message) => {
+      if (message?.ok) {
+        state.connected = true;
+        state.lastError = null;
+        void persistBridgeState();
+      }
+      if (message?.type === 'bootstrap-ack' && message?.bridgeStarted) {
+        state.connected = true;
+        state.lastError = null;
+        void persistBridgeState();
+      }
+    });
+    port.onDisconnect.addListener(() => {
+      const error = chrome.runtime.lastError?.message || 'Native messaging host disconnected';
+      nativeBridgePort = null;
+      state.connected = false;
+      state.lastError = error;
+      void persistBridgeState();
+      scheduleNativeBridgeReconnect();
+    });
+    port.postMessage({
+      type: 'bootstrap',
+      clientId: state.clientId,
+      serverUrl: state.serverUrl,
+      mode: state.mode,
+      workspaceGroupId: state.workspaceGroupId,
+    });
+    return port;
+  } catch (error) {
+    nativeBridgePort = null;
+    state.connected = false;
+    state.lastError = error?.message || String(error);
+    void persistBridgeState();
+    scheduleNativeBridgeReconnect();
+    return null;
+  }
+}
+
+function normalizeTabGroupColor(color) {
+  const allowed = new Set(['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange']);
+  const value = String(color || '').trim().toLowerCase();
+  return allowed.has(value) ? value : 'blue';
+}
+
+async function getValidatedWorkspaceGroup() {
+  if (state.workspaceGroupId == null) return null;
+  try {
+    const group = await chrome.tabGroups.get(Number(state.workspaceGroupId));
+    if (!group) return null;
+    return group;
+  } catch {
+    state.workspaceGroupId = null;
+    await persistWorkspaceState();
+    return null;
+  }
+}
+
+async function updateWorkspaceGroup(groupId, options = {}) {
+  const title = String(options.title || state.workspaceGroupTitle || 'Codex Agent Workspace').trim() || 'Codex Agent Workspace';
+  const color = normalizeTabGroupColor(options.color || state.workspaceGroupColor || 'blue');
+  const collapsed = options.collapsed != null ? !!options.collapsed : false;
+  const updated = await chrome.tabGroups.update(Number(groupId), { title, color, collapsed });
+  state.workspaceGroupId = Number(groupId);
+  state.workspaceGroupTitle = title;
+  state.workspaceGroupColor = color;
+  await persistWorkspaceState();
+  return updated;
+}
+
+async function createWorkspaceGroupForTab(tabId, options = {}) {
+  const groupId = await chrome.tabs.group({ tabIds: Number(tabId) });
+  await updateWorkspaceGroup(groupId, options);
+  return groupId;
+}
+
+async function ensureWorkspaceGroup(tabId, options = {}) {
+  const existing = await getValidatedWorkspaceGroup();
+  if (existing) return existing;
+  if (tabId == null) return null;
+  const groupId = await createWorkspaceGroupForTab(tabId, options);
+  return await chrome.tabGroups.get(groupId);
+}
+
+function scheduleBridgeAlarms() {
+  if (!chrome.alarms) return;
+  chrome.alarms.create(HEARTBEAT_ALARM, { periodInMinutes: 1 });
+  chrome.alarms.create(POLL_ALARM, { periodInMinutes: 1 });
+}
+
+async function warmBridge(force = false) {
+  await ensureStateLoaded();
+  const now = Date.now();
+  if (force || now - lastHeartbeatAt > 25000) {
+    await heartbeat();
+  }
+  if (force || now - lastPollAt > 1200) {
+    await pollOnce();
+  }
+}
+
+async function bootstrapBridge() {
+  if (warmupInFlight) return warmupInFlight;
+  warmupInFlight = (async () => {
+    await ensureStateLoaded();
+    await connectNativeBridge();
+    await ensureOffscreenDocument();
+    scheduleBridgeAlarms();
+    await warmBridge(true);
+    await syncAccessProfileToBridge();
+  })().catch((error) => {
+    state.connected = false;
+    state.lastError = error.message || String(error);
+    void persistBridgeState();
+  }).finally(() => {
+    warmupInFlight = null;
+  });
+  return warmupInFlight;
 }
 
 function pushCommandLog(entry) {
@@ -330,6 +507,23 @@ async function get(path) {
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
+}
+
+function getModeForAccessProfile(accessProfile) {
+  return accessProfile === 'expanded' ? 'expanded' : 'safe';
+}
+
+async function syncAccessProfileToBridge() {
+  try {
+    const response = await post('/api/mode', { mode: getModeForAccessProfile(state.accessProfile) });
+    state.mode = response.mode || state.mode;
+    state.connected = true;
+    state.lastError = null;
+    await persistBridgeState();
+    return { ok: true, mode: state.mode };
+  } catch (error) {
+    return { ok: false, error: error.message || String(error) };
+  }
 }
 
 async function resolveTargetTabId(requestedTabId = null) {
@@ -1011,6 +1205,90 @@ async function openNewTab(url = 'about:blank', active = true) {
   return serializeTab(tab);
 }
 
+async function createCodexTabGroup(url = 'about:blank', options = {}) {
+  const tab = await chrome.tabs.create({ url, active: options.active !== false });
+  const groupId = await createWorkspaceGroupForTab(tab.id, options);
+  return {
+    tab: serializeTab(tab),
+    groupId,
+    workspace: {
+      groupId,
+      title: state.workspaceGroupTitle,
+      color: state.workspaceGroupColor,
+    },
+  };
+}
+
+async function openInCodexWorkspace(url = 'about:blank', options = {}) {
+  const tab = await chrome.tabs.create({ url, active: options.active !== false });
+  const groupOptions = {
+    title: options.title || state.workspaceGroupTitle || 'Codex Agent Workspace',
+    color: options.color || state.workspaceGroupColor || 'blue',
+    collapsed: options.collapsed,
+  };
+  const existingGroup = await getValidatedWorkspaceGroup();
+  if (existingGroup && state.workspaceGroupId != null) {
+    await chrome.tabs.group({ groupId: Number(state.workspaceGroupId), tabIds: tab.id });
+    await updateWorkspaceGroup(Number(state.workspaceGroupId), groupOptions);
+  } else {
+    await createWorkspaceGroupForTab(tab.id, groupOptions);
+  }
+  return {
+    tab: serializeTab(tab),
+    workspace: {
+      groupId: state.workspaceGroupId,
+      title: state.workspaceGroupTitle,
+      color: state.workspaceGroupColor,
+      collapsed: !!existingGroup?.collapsed,
+    },
+  };
+}
+
+async function getTabWorkspaceState() {
+  const group = await getValidatedWorkspaceGroup();
+  if (!group) {
+    return {
+      ok: true,
+      workspace: null,
+    };
+  }
+  const tabs = await chrome.tabs.query({ groupId: Number(state.workspaceGroupId) });
+  return {
+    ok: true,
+    workspace: {
+      groupId: Number(state.workspaceGroupId),
+      title: group.title || state.workspaceGroupTitle,
+      color: group.color || state.workspaceGroupColor,
+      collapsed: !!group.collapsed,
+      tabCount: tabs.length,
+      tabs: tabs.map(serializeTab),
+    },
+  };
+}
+
+async function addActiveTabToWorkspace(tabId = null, options = {}) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const groupOptions = {
+    title: options.title || state.workspaceGroupTitle || 'Codex Agent Workspace',
+    color: options.color || state.workspaceGroupColor || 'blue',
+    collapsed: options.collapsed,
+  };
+  const group = await ensureWorkspaceGroup(resolvedTabId, groupOptions);
+  if (group && state.workspaceGroupId != null) {
+    await chrome.tabs.group({ groupId: Number(state.workspaceGroupId), tabIds: resolvedTabId });
+    await updateWorkspaceGroup(Number(state.workspaceGroupId), groupOptions);
+  }
+  return {
+    ok: true,
+    tabId: resolvedTabId,
+    workspace: {
+      groupId: state.workspaceGroupId,
+      title: state.workspaceGroupTitle,
+      color: state.workspaceGroupColor,
+    },
+  };
+}
+
 async function closeTab(tabId = null) {
   const resolvedTabId = await resolveTargetTabId(tabId);
   const tab = await chrome.tabs.get(resolvedTabId);
@@ -1264,6 +1542,14 @@ async function handleCommand(command) {
       return await switchTab(params.tabId);
     case 'openNewTab':
       return await openNewTab(params.url || 'about:blank', params.active !== false);
+    case 'createCodexTabGroup':
+      return await createCodexTabGroup(params.url || 'about:blank', params);
+    case 'openInCodexWorkspace':
+      return await openInCodexWorkspace(params.url || 'about:blank', params);
+    case 'getTabWorkspaceState':
+      return await getTabWorkspaceState();
+    case 'addActiveTabToWorkspace':
+      return await addActiveTabToWorkspace(params.tabId ?? null, params);
     case 'closeTab':
       return await closeTab(params.tabId ?? null);
     case 'navigate': {
@@ -2725,11 +3011,23 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
+    await ensureStateLoaded();
+    if (message?.type === 'offscreen-heartbeat') {
+      void warmBridge().catch(() => {});
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message?.type === 'popup-connect-native-bridge') {
+      const port = await connectNativeBridge();
+      sendResponse({ ok: !!port, connected: !!nativeBridgePort, host: NATIVE_HOST_NAME });
+      return;
+    }
     if (message?.type === 'popup-get-state') {
       sendResponse({
         clientId: state.clientId,
         serverUrl: state.serverUrl,
         bridgeToken: state.bridgeToken,
+        accessProfile: state.accessProfile,
         mouseCueEnabled: state.mouseCueEnabled,
         bridgeState: state,
         activeTab: await activeTab(),
@@ -2738,6 +3036,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         console: getConsoleSnapshot(message.tabId ?? null),
         macro: getMacroState(),
         recipes: Object.keys(namedRecipes),
+        nativeBridge: {
+          connected: !!nativeBridgePort,
+          host: NATIVE_HOST_NAME,
+          workspaceGroupId: state.workspaceGroupId,
+        },
       });
       return;
     }
@@ -2752,6 +3055,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       state.bridgeToken = String(message.bridgeToken || '').trim();
       await chrome.storage.local.set({ bridgeToken: state.bridgeToken });
       sendResponse({ ok: true, bridgeToken: state.bridgeToken });
+      return;
+    }
+    if (message?.type === 'popup-save-access-profile') {
+      const value = String(message.accessProfile || 'controlled').trim().toLowerCase();
+      state.accessProfile = value === 'expanded' ? 'expanded' : 'controlled';
+      await chrome.storage.local.set({ accessProfile: state.accessProfile });
+      await persistWorkspaceState();
+      void syncAccessProfileToBridge();
+      sendResponse({ ok: true, accessProfile: state.accessProfile });
       return;
     }
     if (message?.type === 'popup-save-mouse-cue') {
@@ -2787,13 +3099,29 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   return true;
 });
 
+chrome.runtime.onStartup.addListener(() => {
+  void bootstrapBridge();
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  void bootstrapBridge();
+});
+
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  if (alarm?.name === HEARTBEAT_ALARM || alarm?.name === POLL_ALARM) {
+    void warmBridge().catch(() => {});
+  }
+});
+
 async function heartbeat() {
+  await ensureStateLoaded();
   try {
     const tab = await activeTab();
     const response = await post('/api/register', { clientId: state.clientId, lastTab: tab });
     state.connected = true;
     state.lastError = null;
     state.mode = response.mode || state.mode;
+    lastHeartbeatAt = Date.now();
   } catch (error) {
     state.connected = false;
     state.lastError = error.message;
@@ -2802,10 +3130,12 @@ async function heartbeat() {
 }
 
 async function pollOnce() {
+  await ensureStateLoaded();
   try {
     const payload = await get(`/api/pull?clientId=${encodeURIComponent(state.clientId)}`);
     state.connected = true;
     state.lastError = null;
+    lastPollAt = Date.now();
     if (payload.command) {
       try {
         const data = await handleCommand(payload.command);
@@ -2838,8 +3168,7 @@ async function pollOnce() {
 }
 
 async function loop() {
-  await loadState();
-  await heartbeat();
+  await bootstrapBridge();
   setInterval(heartbeat, 5000);
   setInterval(pollOnce, 700);
 }
