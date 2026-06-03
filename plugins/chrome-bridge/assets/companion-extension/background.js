@@ -1241,6 +1241,80 @@ async function searchWeb(query, options = {}, tabId = null) {
   }, tabId);
 }
 
+async function redditComposeDraft(params = {}, tabId = null) {
+  const subreddit = String(params.subreddit || '').trim().replace(/^r\//i, '').replace(/^\/+/g, '');
+  const draftUrl = subreddit ? `https://www.reddit.com/r/${encodeURIComponent(subreddit)}/submit` : 'https://www.reddit.com/submit';
+  const nav = await navigateAndWait(draftUrl, {
+    timeoutMs: params.timeoutMs || 20000,
+    titleContains: params.titleContains || 'Reddit',
+    urlContains: '/submit',
+  }, tabId);
+  let fillResult = null;
+  if (params.title || params.body) {
+    fillResult = await executeInTab((draft) => {
+      const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      const isVisible = (el) => {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      };
+      const setNativeValue = (el, value) => {
+        if (!el) return false;
+        const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(el, value);
+        else el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        return true;
+      };
+      const titleNeedle = norm('title');
+      const bodyNeedle = norm('body');
+      const titleCandidates = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'))
+        .filter(isVisible)
+        .filter((el) => {
+          const hint = norm(`${el.getAttribute('aria-label') || ''} ${el.getAttribute('placeholder') || ''} ${el.name || ''} ${el.id || ''} ${el.closest('label')?.innerText || ''}`);
+          return hint.includes(titleNeedle) || el.name === 'title' || el.id === 'title';
+        });
+      const bodyCandidates = Array.from(document.querySelectorAll('textarea, [contenteditable="true"], input'))
+        .filter(isVisible)
+        .filter((el) => {
+          const hint = norm(`${el.getAttribute('aria-label') || ''} ${el.getAttribute('placeholder') || ''} ${el.name || ''} ${el.id || ''} ${el.closest('label')?.innerText || ''}`);
+          return hint.includes(bodyNeedle) || hint.includes('text') || hint.includes('post');
+        });
+      const titleEl = titleCandidates[0] || Array.from(document.querySelectorAll('input, textarea')).find((el) => isVisible(el) && el.type === 'text');
+      const bodyEl = bodyCandidates.find((el) => el !== titleEl) || Array.from(document.querySelectorAll('[contenteditable="true"], textarea')).find((el) => isVisible(el) && el !== titleEl);
+      const result = {
+        titleFound: !!titleEl,
+        bodyFound: !!bodyEl,
+      };
+      if (draft.title && titleEl) {
+        titleEl.focus();
+        result.titleFilled = setNativeValue(titleEl, draft.title);
+      }
+      if (draft.body && bodyEl) {
+        bodyEl.focus();
+        if (bodyEl.isContentEditable) {
+          bodyEl.innerText = draft.body;
+          bodyEl.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: draft.body }));
+          result.bodyFilled = true;
+        } else {
+          result.bodyFilled = setNativeValue(bodyEl, draft.body);
+        }
+      }
+      return result;
+    }, [{ title: params.title || '', body: params.body || '' }], tabId);
+  }
+  return {
+    ok: true,
+    subreddit: subreddit || null,
+    url: draftUrl,
+    navigation: nav,
+    filled: fillResult,
+  };
+}
+
 async function createCodexTabGroup(url = 'about:blank', options = {}) {
   const tab = await chrome.tabs.create({ url, active: options.active !== false });
   const groupId = await createWorkspaceGroupForTab(tab.id, options);
@@ -1586,6 +1660,14 @@ async function handleCommand(command) {
         timeoutMs: params.timeoutMs || 15000,
         titleContains: params.titleContains || null,
         urlContains: params.urlContains || null,
+      }, params.tabId ?? null);
+    case 'redditComposeDraft':
+      return await redditComposeDraft({
+        subreddit: params.subreddit || null,
+        title: params.title || '',
+        body: params.body || '',
+        timeoutMs: params.timeoutMs || 20000,
+        titleContains: params.titleContains || 'Reddit',
       }, params.tabId ?? null);
     case 'createCodexTabGroup':
       return await createCodexTabGroup(params.url || 'about:blank', params);
