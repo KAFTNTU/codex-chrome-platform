@@ -15,6 +15,9 @@ let state = {
   lastError: null,
   serverUrl: DEFAULT_SERVER,
   bridgeToken: '',
+  assistantApiEndpoint: '',
+  assistantApiKey: '',
+  assistantTask: '',
   accessProfile: 'controlled',
   mode: 'safe',
   mouseCueEnabled: true,
@@ -57,10 +60,27 @@ let namedRecipes = {};
 let formProfiles = {};
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'bridgeToken', 'namedRecipes', 'formProfiles', 'mouseCueEnabled', 'workspaceGroupId', 'workspaceGroupTitle', 'workspaceGroupColor', 'accessProfile']);
+  const stored = await chrome.storage.local.get([
+    'clientId',
+    'serverUrl',
+    'bridgeToken',
+    'assistantApiEndpoint',
+    'assistantApiKey',
+    'assistantTask',
+    'namedRecipes',
+    'formProfiles',
+    'mouseCueEnabled',
+    'workspaceGroupId',
+    'workspaceGroupTitle',
+    'workspaceGroupColor',
+    'accessProfile',
+  ]);
   state.clientId = stored.clientId || crypto.randomUUID();
   state.serverUrl = stored.serverUrl || DEFAULT_SERVER;
   state.bridgeToken = stored.bridgeToken || '';
+  state.assistantApiEndpoint = stored.assistantApiEndpoint || '';
+  state.assistantApiKey = stored.assistantApiKey || '';
+  state.assistantTask = stored.assistantTask || '';
   state.accessProfile = stored.accessProfile || 'controlled';
   state.mouseCueEnabled = stored.mouseCueEnabled !== false;
   state.workspaceGroupId = Number.isFinite(Number(stored.workspaceGroupId)) ? Number(stored.workspaceGroupId) : null;
@@ -72,6 +92,9 @@ async function loadState() {
     clientId: state.clientId,
     serverUrl: state.serverUrl,
     bridgeToken: state.bridgeToken,
+    assistantApiEndpoint: state.assistantApiEndpoint,
+    assistantApiKey: state.assistantApiKey,
+    assistantTask: state.assistantTask,
     accessProfile: state.accessProfile,
     mouseCueEnabled: state.mouseCueEnabled,
     workspaceGroupId: state.workspaceGroupId,
@@ -5260,6 +5283,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         clientId: state.clientId,
         serverUrl: state.serverUrl,
         bridgeToken: state.bridgeToken,
+        assistantApiEndpoint: state.assistantApiEndpoint,
+        assistantApiKey: state.assistantApiKey,
+        assistantTask: state.assistantTask,
         accessProfile: state.accessProfile,
         mouseCueEnabled: state.mouseCueEnabled,
         bridgeState: state,
@@ -5288,6 +5314,36 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       state.bridgeToken = String(message.bridgeToken || '').trim();
       await chrome.storage.local.set({ bridgeToken: state.bridgeToken });
       sendResponse({ ok: true, bridgeToken: state.bridgeToken });
+      return;
+    }
+    if (message?.type === 'popup-save-assistant-settings') {
+      state.assistantApiEndpoint = String(message.assistantApiEndpoint || '').trim();
+      state.assistantApiKey = String(message.assistantApiKey || '').trim();
+      state.assistantTask = String(message.assistantTask || '').trim();
+      await chrome.storage.local.set({
+        assistantApiEndpoint: state.assistantApiEndpoint,
+        assistantApiKey: state.assistantApiKey,
+        assistantTask: state.assistantTask,
+      });
+      sendResponse({
+        ok: true,
+        assistantApiEndpoint: state.assistantApiEndpoint,
+        assistantApiKey: state.assistantApiKey,
+        assistantTask: state.assistantTask,
+      });
+      return;
+    }
+    if (message?.type === 'popup-run-assistant-task') {
+      const assistantTask = String(message.assistantTask ?? state.assistantTask ?? '').trim();
+      if (assistantTask) {
+        state.assistantTask = assistantTask;
+        await chrome.storage.local.set({ assistantTask: state.assistantTask });
+        pushCommandLog({
+          action: 'assistantTask',
+          paramsPreview: assistantTask.length > 180 ? `${assistantTask.slice(0, 177)}...` : assistantTask,
+        });
+      }
+      sendResponse({ ok: true, assistantTask: state.assistantTask });
       return;
     }
     if (message?.type === 'popup-save-access-profile') {

@@ -79,6 +79,17 @@
       background: #403319;
       border-color: #6e5623;
     }
+    textarea {
+      width: 100%;
+      min-height: 88px;
+      resize: vertical;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      padding: 7px 9px;
+      font: inherit;
+    }
     code {
       display: block;
       font-size: 11px;
@@ -159,6 +170,39 @@
       border-color: #4f89b9;
       color: #f4fbff;
     }
+    .details {
+      border-radius: 9px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      overflow: hidden;
+    }
+    .details summary {
+      cursor: pointer;
+      padding: 8px;
+      list-style: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .details summary::-webkit-details-marker { display: none; }
+    .details-body {
+      padding: 0 8px 8px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      gap: 8px;
+    }
+    .actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .actions button {
+      flex: 1;
+      min-width: 0;
+    }
+    .tiny {
+      font-size: 10px;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -176,19 +220,30 @@
         </div>
       </div>
       <div class="row">
-        <div class="sub">Bridge token</div>
-        <div class="inline">
-          <input id="bridgeToken" />
-          <button id="saveToken">Save token</button>
-        </div>
-      </div>
-      <div class="row">
         <div class="sub">Access profile</div>
         <div class="inline">
           <button id="controlledProfile" class="profile-button">Controlled</button>
           <button id="expandedProfile" class="profile-button">Expanded</button>
         </div>
         <div class="sub">Expanded combines developer and local network capabilities, but sensitive steps still ask for confirmation.</div>
+      </div>
+      <div class="row">
+        <div class="sub">API endpoint</div>
+        <input id="assistantApiEndpoint" placeholder="https://api.openai.com/v1/chat/completions" />
+      </div>
+      <div class="row">
+        <div class="sub">API key</div>
+        <input id="assistantApiKey" type="password" placeholder="Paste your API key" />
+      </div>
+      <div class="row">
+        <div class="sub">What should AI do?</div>
+        <textarea id="assistantTask" placeholder="Describe the task for the assistant..."></textarea>
+        <div class="tiny">The task is saved locally in your browser and sent to the bridge when you press Run task.</div>
+      </div>
+      <div class="inline">
+        <button id="saveAssistant" class="primary">Save AI settings</button>
+        <button id="runAssistantTask" class="primary">Run task</button>
+        <button id="clearAssistantTask">Clear task</button>
       </div>
       <div class="row">
         <label class="toggle">
@@ -207,45 +262,53 @@
       <div class="row notice" id="notice"></div>
     </div>
 
-    <div class="card">
-      <div class="title">Active tab</div>
-      <div class="row">
-        <div id="activeTabTitle"></div>
-        <code id="activeTabUrl"></code>
+    <details class="details">
+      <summary>Browser context</summary>
+      <div class="details-body">
+        <div class="row">
+          <div class="title" style="font-size:12px;font-weight:700;">
+            <span>Active tab</span>
+          </div>
+          <div id="activeTabTitle"></div>
+          <code id="activeTabUrl"></code>
+        </div>
+        <div class="actions">
+          <button id="attachMonitor" class="primary">Start monitor</button>
+          <button id="detachMonitor">Stop monitor</button>
+          <button id="clearMonitor" class="warn">Clear</button>
+        </div>
+        <div class="row small">
+          <span id="monitorState" class="sub">Monitor inactive</span>
+        </div>
       </div>
-      <div class="inline">
-        <button id="attachMonitor" class="primary">Start monitor</button>
-        <button id="detachMonitor">Stop monitor</button>
-        <button id="clearMonitor" class="warn">Clear</button>
-      </div>
-      <div class="row small">
-        <span id="monitorState" class="sub">Monitor inactive</span>
-      </div>
-    </div>
+    </details>
 
-    <div class="card">
-      <div class="title">
-        <span>Network</span>
-        <span id="networkCount" class="pill">0</span>
+    <details class="details">
+      <summary>Diagnostics</summary>
+      <div class="details-body">
+        <div class="card" style="margin:0;">
+          <div class="title">
+            <span>Network</span>
+            <span id="networkCount" class="pill">0</span>
+          </div>
+          <div id="networkList" class="list"></div>
+        </div>
+        <div class="card" style="margin:0;">
+          <div class="title">
+            <span>Console</span>
+            <span id="consoleCount" class="pill">0</span>
+          </div>
+          <div id="consoleList" class="list"></div>
+        </div>
+        <div class="card" style="margin:0;">
+          <div class="title">
+            <span>Bridge commands</span>
+            <span id="commandCount" class="pill">0</span>
+          </div>
+          <div id="commandList" class="list"></div>
+        </div>
       </div>
-      <div id="networkList" class="list"></div>
-    </div>
-
-    <div class="card">
-      <div class="title">
-        <span>Console</span>
-        <span id="consoleCount" class="pill">0</span>
-      </div>
-      <div id="consoleList" class="list"></div>
-    </div>
-
-    <div class="card">
-      <div class="title">
-        <span>Bridge commands</span>
-        <span id="commandCount" class="pill">0</span>
-      </div>
-      <div id="commandList" class="list"></div>
-    </div>
+    </details>
   </div>
   <script src="popup.js"></script>
 </body>

@@ -141,8 +141,10 @@ async function refresh() {
     const state = await chrome.runtime.sendMessage({ type: 'popup-get-state', tabId: currentTabId });
     el('clientId').textContent = state.clientId || '-';
     el('serverUrl').value = state.serverUrl || 'http://127.0.0.1:17373';
-    el('bridgeToken').value = state.bridgeToken || '';
     renderAccessProfile(state.accessProfile || 'controlled');
+    el('assistantApiEndpoint').value = state.assistantApiEndpoint || '';
+    el('assistantApiKey').value = state.assistantApiKey || '';
+    el('assistantTask').value = state.assistantTask || '';
     el('mouseCueEnabled').checked = state.mouseCueEnabled !== false;
     renderStatus(state.bridgeState);
     renderActiveTab(state.activeTab);
@@ -173,11 +175,43 @@ async function saveServerUrl() {
   await refresh();
 }
 
-async function saveToken() {
+async function saveAssistantSettings() {
   try {
     await chrome.runtime.sendMessage({
-      type: 'popup-save-token',
-      bridgeToken: el('bridgeToken').value.trim(),
+      type: 'popup-save-assistant-settings',
+      assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
+      assistantApiKey: el('assistantApiKey').value.trim(),
+      assistantTask: el('assistantTask').value.trim(),
+    });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
+  await refresh();
+}
+
+async function runAssistantTask() {
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'popup-run-assistant-task',
+      assistantTask: el('assistantTask').value.trim(),
+    });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
+  await refresh();
+  showNotice('Task sent to bridge');
+}
+
+async function clearAssistantTask() {
+  el('assistantTask').value = '';
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'popup-save-assistant-settings',
+      assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
+      assistantApiKey: el('assistantApiKey').value.trim(),
+      assistantTask: '',
     });
   } catch (error) {
     showNotice(error.message || String(error), true);
@@ -243,7 +277,9 @@ async function clearMonitor() {
 }
 
 el('save').addEventListener('click', saveServerUrl);
-el('saveToken').addEventListener('click', saveToken);
+el('saveAssistant').addEventListener('click', saveAssistantSettings);
+el('runAssistantTask').addEventListener('click', runAssistantTask);
+el('clearAssistantTask').addEventListener('click', clearAssistantTask);
 el('controlledProfile').addEventListener('click', async () => {
   currentAccessProfile = 'controlled';
   await saveAccessProfile();
@@ -256,6 +292,10 @@ el('mouseCueEnabled').addEventListener('change', saveMouseCueEnabled);
 el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);
+
+for (const id of ['assistantApiEndpoint', 'assistantApiKey', 'assistantTask']) {
+  el(id).addEventListener('change', saveAssistantSettings);
+}
 
 refresh();
 pollTimer = setInterval(refresh, 1500);
