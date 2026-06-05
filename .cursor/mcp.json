@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "chrome-bridge": {
+      "command": "py",
+      "args": ["-3", "plugins/chrome-bridge/scripts/browser_bridge_mcp.py"]
+    }
+  }
+}

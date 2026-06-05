@@ -130,6 +130,16 @@ If you want the browser to start the bridge automatically when it opens, use the
 - `native-messaging/README.md`
 - `native-messaging/AI_SETUP.md`
 
+## Cursor setup
+
+If you want Cursor to talk to this bridge, add the project MCP config from:
+
+- `.cursor/mcp.json`
+
+If you want a ready-made prompt for Codex or Cursor, use:
+
+- `CODEX_CURSOR_PROMPT.md`
+
 The flow is:
 
 1. Register the native host in the OS.
