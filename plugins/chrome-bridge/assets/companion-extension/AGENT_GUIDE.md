@@ -48,12 +48,16 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `semanticClick` when you know the intent but not the exact selector.
 - Use `pageDiffMemory` when you want to compare what changed after an action.
 - Use `resolveDomRoute` when you need the ancestry, frame path, or shadow route for an element.
+- Use `pageIntentMap` when you want a quick semantic map of visible controls.
+- Use `ocrFromScreenshot` when text is baked into images, canvas, or non-DOM UI.
+- Use `visualPageCompare` when you want to see whether the page visually changed between screenshots.
 - Use `screenshot` or `elementScreenshot` when layout matters.
 - Use `waitForText` / `waitForSelector` before clicking dynamic UI.
 - Use `smartFocus` to find the right field when the form is cluttered.
 - Use `universalFormAssist` when you want to fill several common fields quickly across different sites.
 - Use `watchDownloads` / `waitForDownload` when a file should appear in the browser download list.
 - Use form profiles when you want to save and replay the same browser form values repeatedly.
+- Use `siteMemorySnapshot` / `getSiteMemory` when you want to remember what the current site looked like and what you already learned there.
 - Use tab groups when you need several related pages open together.
 - Use the upload assistant only for user-owned completed files.
 - Use preflight before attach/submit when file integrity matters.

@@ -80,9 +80,15 @@ TOOLS = [
     {"name":"chrome_bridge_semantic_click","description":"Click a page element by intent or visible text rather than a strict selector.","inputSchema":{"type":"object","properties":{"intent":{"type":"string"},"selector":{"type":"string"},"tabId":{"type":"integer"}},"required":["intent"],"additionalProperties":False}},
     {"name":"chrome_bridge_page_diff_memory","description":"Store a short-term page snapshot and return diffs from the previous snapshot for the tab.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_resolve_dom_route","description":"Resolve the DOM route and geometry for a selector or visible text needle.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_page_intent_map","description":"Map visible controls into likely intents such as submit, next, search, close, upload, or download.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_smart_focus","description":"Focus the most likely input or button on the page.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["input","button"]},"text":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_watch_downloads","description":"Watch recent browser downloads and return a compact snapshot of matching items.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"waitForComplete":{"type":"boolean"},"timeoutMs":{"type":"integer"},"pollMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_wait_for_download","description":"Wait until a matching browser download appears or completes.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"waitForComplete":{"type":"boolean"},"timeoutMs":{"type":"integer"},"pollMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_ocr_from_screenshot","description":"Run OCR on a screenshot of the current page or a specific element.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"fullPage":{"type":"boolean"},"lang":{"type":"string"},"language":{"type":"string"},"padding":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_visual_page_compare","description":"Capture a screenshot and compare it against the previous baseline for the same site.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"fullPage":{"type":"boolean"},"baselinePath":{"type":"string"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_site_memory_snapshot","description":"Capture a page summary and store it in site memory for the current host.","inputSchema":{"type":"object","properties":{"note":{"type":"string"},"includeIntentMap":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_get_site_memory","description":"Read the stored memory for the current site.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_clear_site_memory","description":"Clear the stored memory for the current site or a provided site URL.","inputSchema":{"type":"object","properties":{"site":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_open_file_picker","description":"Open the system file picker for an input[type=file].","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_set_file_input_files","description":"Set files on an input[type=file] using local filesystem paths.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"tabId":{"type":"integer"}},"required":["selector","files"],"additionalProperties":False}},
     {"name":"chrome_bridge_file_upload_assistant_preview","description":"Preview assistive upload: validates allowed/manual files and returns file info + page screenshot before attachment.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"manualSelectedFiles":{"type":"boolean"},"userOwnedCompletedWork":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["files"],"additionalProperties":False}},
@@ -426,6 +432,11 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
         return as_text_content(call_bridge("resolveDomRoute",payload))
+    if name=="chrome_bridge_page_intent_map":
+        payload={}
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("pageIntentMap",payload))
     if name=="chrome_bridge_smart_focus":
         payload={}
         if "mode" in arguments: payload["mode"]=arguments["mode"]
@@ -443,6 +454,30 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
             if field in arguments:
                 payload[field]=int(arguments[field]) if field in ("timeoutMs","pollMs","tabId") else bool(arguments[field]) if field=="waitForComplete" else arguments[field]
         return as_text_content(call_bridge("waitForDownload",payload))
+    if name=="chrome_bridge_ocr_from_screenshot":
+        payload={}
+        for field in ("selector","fullPage","lang","language","padding","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("padding","tabId") else bool(arguments[field]) if field=="fullPage" else arguments[field]
+        return as_text_content(call_bridge("ocrFromScreenshot",payload))
+    if name=="chrome_bridge_visual_page_compare":
+        payload={}
+        for field in ("selector","fullPage","baselinePath","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field=="tabId" else bool(arguments[field]) if field=="fullPage" else arguments[field]
+        return as_text_content(call_bridge("visualPageCompare",payload))
+    if name=="chrome_bridge_site_memory_snapshot":
+        payload={}
+        for field in ("note","includeIntentMap","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field=="tabId" else bool(arguments[field]) if field=="includeIntentMap" else arguments[field]
+        return as_text_content(call_bridge("siteMemorySnapshot",payload))
+    if name=="chrome_bridge_get_site_memory":
+        return as_text_content(call_bridge("getSiteMemory"))
+    if name=="chrome_bridge_clear_site_memory":
+        payload={}
+        if "site" in arguments: payload["site"]=arguments["site"]
+        return as_text_content(call_bridge("clearSiteMemory",payload))
     if name=="chrome_bridge_open_file_picker": return as_text_content(call_bridge("openFilePicker",{"selector":arguments["selector"]}))
     if name=="chrome_bridge_set_file_input_files":
         payload={"selector":arguments["selector"],"files":arguments["files"]}
@@ -597,7 +632,7 @@ def main()->None:
         method=message.get("method"); msg_id=message.get("id")
         try:
             if method=="initialize":
-              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.11"}})
+              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.12"}})
             elif method=="notifications/initialized":
                 continue
             elif method=="tools/list":

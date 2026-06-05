@@ -11,4 +11,5 @@ macros/
 .chrome-bridge/
 *.log
 *.tmp
+*.traineddata
 plugins/chrome-bridge/scripts/__pycache__/

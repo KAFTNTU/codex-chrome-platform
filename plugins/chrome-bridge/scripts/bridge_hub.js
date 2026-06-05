@@ -5,6 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const zlib = require('zlib');
+const { PNG } = require('pngjs');
+const { createWorker } = require('tesseract.js');
 const {
   loadRuntime,
   saveRuntime,
@@ -25,8 +27,14 @@ const results = new Map();
 const OUTPUT_DIR = path.join(os.homedir(), '.chrome-bridge', 'output');
 const LOGS_DIR = path.join(os.homedir(), '.chrome-bridge', 'logs');
 const PREFLIGHT_DIR = path.join(os.homedir(), '.chrome-bridge', 'preflight');
+const OCR_CACHE_DIR = path.join(os.homedir(), '.chrome-bridge', 'ocr-cache');
+const SITE_MEMORY_PATH = path.join(os.homedir(), '.chrome-bridge', 'site-memory.json');
 const ASSISTIVE_UPLOAD_LOG = path.join(LOGS_DIR, 'assistive_upload.log');
 const EDUCATIONAL_HOST_HINTS = ['atutor', 'moodle', 'canvas', 'blackboard', 'school', 'edu.'];
+let siteMemoryLoaded = false;
+let siteMemoryByHost = {};
+let ocrWorker = null;
+let ocrWorkerLang = null;
 
 function now() { return new Date().toISOString(); }
 
@@ -111,6 +119,10 @@ function ensurePreflightDir() {
   fs.mkdirSync(PREFLIGHT_DIR, { recursive: true });
 }
 
+function ensureOcrCacheDir() {
+  fs.mkdirSync(OCR_CACHE_DIR, { recursive: true });
+}
+
 function ensureLogsDir() {
   fs.mkdirSync(LOGS_DIR, { recursive: true });
 }
@@ -118,6 +130,216 @@ function ensureLogsDir() {
 function appendAssistiveUploadLog(entry) {
   ensureLogsDir();
   fs.appendFileSync(ASSISTIVE_UPLOAD_LOG, `${JSON.stringify({ ts: now(), ...entry })}\n`, 'utf8');
+}
+
+function ensureSiteMemoryLoaded() {
+  if (siteMemoryLoaded) return;
+  siteMemoryLoaded = true;
+  try {
+    if (fs.existsSync(SITE_MEMORY_PATH)) {
+      siteMemoryByHost = JSON.parse(fs.readFileSync(SITE_MEMORY_PATH, 'utf8')) || {};
+    }
+  } catch {
+    siteMemoryByHost = {};
+  }
+}
+
+function persistSiteMemory() {
+  ensureLogsDir();
+  fs.mkdirSync(path.dirname(SITE_MEMORY_PATH), { recursive: true });
+  fs.writeFileSync(SITE_MEMORY_PATH, JSON.stringify(siteMemoryByHost, null, 2), 'utf8');
+}
+
+function normalizeHostFromUrl(rawUrl = '') {
+  try {
+    return String(new URL(rawUrl).hostname || '').toLowerCase();
+  } catch {
+    return String(rawUrl || '').toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+  }
+}
+
+function normalizePreview(value, limit = 220) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, limit);
+}
+
+function getSiteMemoryKey(rawUrl = '') {
+  return normalizeHostFromUrl(rawUrl) || 'unknown';
+}
+
+function rememberSiteMemory(rawUrl = '', patch = {}) {
+  ensureSiteMemoryLoaded();
+  const key = getSiteMemoryKey(rawUrl);
+  const current = siteMemoryByHost[key] || { host: key, history: [], notes: [] };
+  const history = Array.isArray(current.history) ? current.history.slice(0, 9) : [];
+  const next = {
+    ...current,
+    host: key,
+    lastSeenAt: now(),
+    lastUrl: rawUrl || current.lastUrl || '',
+    history: [{
+      at: now(),
+      url: rawUrl || current.lastUrl || '',
+      title: patch.title || current.title || '',
+      kind: patch.kind || 'state',
+      note: patch.note || null,
+    }, ...history].slice(0, 10),
+    ...patch,
+  };
+  siteMemoryByHost[key] = next;
+  persistSiteMemory();
+  return next;
+}
+
+function readSiteMemory(rawUrl = '') {
+  ensureSiteMemoryLoaded();
+  const key = getSiteMemoryKey(rawUrl);
+  return siteMemoryByHost[key] || null;
+}
+
+function clearSiteMemory(rawUrl = null) {
+  ensureSiteMemoryLoaded();
+  if (rawUrl) {
+    delete siteMemoryByHost[getSiteMemoryKey(rawUrl)];
+  } else {
+    siteMemoryByHost = {};
+  }
+  persistSiteMemory();
+  return { ok: true };
+}
+
+function dataUrlToBuffer(dataUrl) {
+  const prefix = 'data:image/png;base64,';
+  if (!dataUrl || !String(dataUrl).startsWith(prefix)) {
+    throw new Error('Expected a PNG data URL');
+  }
+  return Buffer.from(String(dataUrl).slice(prefix.length), 'base64');
+}
+
+function comparePngBuffers(beforeBuffer, afterBuffer) {
+  const before = PNG.sync.read(beforeBuffer);
+  const after = PNG.sync.read(afterBuffer);
+  const width = Math.min(before.width, after.width);
+  const height = Math.min(before.height, after.height);
+  const totalPixels = Math.max(1, width * height);
+  let changedPixels = 0;
+  let channelDelta = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const idxBefore = (before.width * y + x) * 4;
+      const idxAfter = (after.width * y + x) * 4;
+      let pixelChanged = false;
+      for (let c = 0; c < 4; c += 1) {
+        const delta = Math.abs(before.data[idxBefore + c] - after.data[idxAfter + c]);
+        channelDelta += delta;
+        if (delta > 15) pixelChanged = true;
+      }
+      if (pixelChanged) changedPixels += 1;
+    }
+  }
+  const changedRatio = changedPixels / totalPixels;
+  return {
+    width,
+    height,
+    totalPixels,
+    changedPixels,
+    changedRatio,
+    channelDelta,
+    identical: changedPixels === 0,
+  };
+}
+
+async function getOcrWorker(lang = 'eng') {
+  const requested = String(lang || 'eng').trim() || 'eng';
+  if (ocrWorker && ocrWorkerLang === requested) return ocrWorker;
+  if (ocrWorker && typeof ocrWorker.terminate === 'function') {
+    try { await ocrWorker.terminate(); } catch {}
+  }
+  ensureOcrCacheDir();
+  ocrWorker = await createWorker(requested, 1, {
+    cachePath: OCR_CACHE_DIR,
+  });
+  ocrWorkerLang = requested;
+  return ocrWorker;
+}
+
+async function ocrDataUrl(dataUrl, lang = 'eng') {
+  const pngPath = saveDataUrlPng(dataUrl, 'ocr_source');
+  if (!pngPath) throw new Error('Could not persist OCR screenshot');
+  const worker = await getOcrWorker(lang);
+  const result = await worker.recognize(pngPath);
+  const text = String(result?.data?.text || '').replace(/\s+\n/g, '\n').trim();
+  return {
+    text,
+    confidence: Number(result?.data?.confidence || 0),
+    lines: Array.isArray(result?.data?.lines) ? result.data.lines.slice(0, 100).map((line) => ({
+      text: normalizePreview(line?.text || '', 120),
+      confidence: Number(line?.confidence || 0),
+    })) : [],
+    words: Array.isArray(result?.data?.words) ? result.data.words.slice(0, 100).map((word) => ({
+      text: normalizePreview(word?.text || '', 80),
+      confidence: Number(word?.confidence || 0),
+    })) : [],
+    imagePath: pngPath,
+  };
+}
+
+function inferIntentFromElementText(text = '', attrs = {}) {
+  const hay = normalizePreview([text, attrs.ariaLabel, attrs.title, attrs.placeholder, attrs.name, attrs.id].filter(Boolean).join(' '), 240).toLowerCase();
+  const rules = [
+    ['submit', /(submit|send|відправ|надісл|опубліку|post|publish|save|apply|confirm|finish|complete)/],
+    ['next', /(next|continue|далі|продовж|go on|proceed|forward)/],
+    ['back', /(back|previous|назад|return|previous page)/],
+    ['close', /(close|dismiss|cancel|відмін|закрити|х|×)/],
+    ['search', /(search|find|lookup|search the web|пошук|шукати)/],
+    ['open', /(open|view|show|details|перегля|відкрити)/],
+    ['download', /(download|save as|скач|завантаж)/],
+    ['upload', /(upload|attach|choose file|file|прикріп|додати файл)/],
+    ['delete', /(delete|remove|trash|dismiss|видал)/],
+    ['expand', /(expand|more|show more|розгор|details|open menu)/],
+    ['collapse', /(collapse|less|hide|згорнути|close section)/],
+    ['edit', /(edit|change|rename|modify|редаг|змінити)/],
+    ['login', /(login|sign in|enter|вхід|увійти|authorize)/],
+  ];
+  for (const [intent, rx] of rules) {
+    if (rx.test(hay)) return intent;
+  }
+  return 'unknown';
+}
+
+function buildPageIntentMapFromElements(elements = []) {
+  return elements.slice(0, 200).map((item, index) => {
+    const intent = inferIntentFromElementText(item.text || '', item);
+    return {
+      index: index + 1,
+      intent,
+      confidence: intent === 'unknown' ? 0.3 : 0.92,
+      tag: item.tag || item.kind || null,
+      kind: item.kind || null,
+      text: normalizePreview(item.text || '', 160),
+      selector: item.selector || item.cssSelector || null,
+      href: item.href || null,
+      role: item.role || null,
+      name: item.name || null,
+      type: item.type || null,
+      source: item.source || 'visible-dom',
+    };
+  });
+}
+
+async function captureBridgeScreenshot(params = {}) {
+  const selector = String(params.selector || '').trim();
+  const tabId = params.tabId ?? null;
+  if (selector) {
+    return await executeRemoteAction('elementScreenshot', {
+      selector,
+      padding: Number(params.padding || 8),
+      tabId,
+    });
+  }
+  if (params.fullPage) {
+    return await executeRemoteAction('fullPageScreenshot', { tabId });
+  }
+  return await executeRemoteAction('screenshot', { tabId });
 }
 
 function isEducationalUrl(rawUrl = '') {
@@ -605,6 +827,15 @@ async function executeLocalApiAction(action, params = {}) {
     fileUploadAssistantPreview: 'universalFileUploadPreview',
     fileUploadAssistantAttach: 'universalFileUploadAttach',
     fileUploadAssistantAttachAndSubmit: 'universalFileUploadAttachAndSubmit',
+    pageSnapshotCompare: 'visualPageCompare',
+    pageVisualCompare: 'visualPageCompare',
+    compareScreenshots: 'visualPageCompare',
+    ocrScreenshot: 'ocrFromScreenshot',
+    ocr_from_screenshot: 'ocrFromScreenshot',
+    site_memory_snapshot: 'siteMemorySnapshot',
+    get_site_memory: 'getSiteMemory',
+    clear_site_memory: 'clearSiteMemory',
+    page_intent_map: 'pageIntentMap',
   }[action] || action;
   action = aliasAction;
   if (!params.fileQuery && params.fileName) {
@@ -684,6 +915,132 @@ async function executeLocalApiAction(action, params = {}) {
       fileQuery: path.basename(fileToUpload),
       usePreflightCopy: params.usePreflightCopy !== false,
     });
+  }
+
+  if (action === 'siteMemorySnapshot') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    const summary = await executeRemoteAction('pageSummary', { tabId: params.tabId });
+    const entry = rememberSiteMemory(active.url, {
+      title: active.title || summary?.title || '',
+      summary,
+      note: params.note || null,
+      kind: 'site-memory-snapshot',
+    });
+    return {
+      ok: true,
+      site: active.url,
+      memory: entry,
+    };
+  }
+
+  if (action === 'getSiteMemory') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    return {
+      ok: true,
+      site: active.url,
+      memory: readSiteMemory(active.url),
+    };
+  }
+
+  if (action === 'clearSiteMemory') {
+    const active = latestClient()?.lastTab || null;
+    const site = params.site || active?.url || null;
+    if (!site) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    clearSiteMemory(site);
+    return {
+      ok: true,
+      cleared: true,
+      site,
+    };
+  }
+
+  if (action === 'pageIntentMap') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    const payload = await executeRemoteAction('getElements', { kind: 'all', maxItems: params.maxItems || 200, tabId: params.tabId });
+    const elements = Array.isArray(payload?.elements) ? payload.elements : Array.isArray(payload?.items) ? payload.items : [];
+    const intents = buildPageIntentMapFromElements(elements);
+    const memory = rememberSiteMemory(active.url, {
+      title: active.title || '',
+      intentMap: intents,
+      kind: 'page-intent-map',
+    });
+    return {
+      ok: true,
+      site: active.url,
+      intents,
+      memory,
+    };
+  }
+
+  if (action === 'ocrFromScreenshot') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    const capture = await captureBridgeScreenshot(params);
+    const lang = String(params.lang || params.language || 'eng').trim() || 'eng';
+    const ocr = await ocrDataUrl(capture?.dataUrl || '', lang);
+    const memory = rememberSiteMemory(active.url, {
+      title: active.title || '',
+      lastOcr: {
+        at: now(),
+        lang,
+        textPreview: normalizePreview(ocr.text, 300),
+        confidence: ocr.confidence,
+        imagePath: ocr.imagePath,
+      },
+      kind: 'ocr-from-screenshot',
+    });
+    return {
+      ok: true,
+      site: active.url,
+      lang,
+      screenshotPath: ocr.imagePath,
+      text: ocr.text,
+      confidence: ocr.confidence,
+      lines: ocr.lines,
+      words: ocr.words,
+      memory,
+    };
+  }
+
+  if (action === 'visualPageCompare') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    const capture = await captureBridgeScreenshot(params);
+    const currentPath = saveDataUrlPng(capture?.dataUrl || '', 'visual_compare');
+    if (!currentPath) return errorPayload('INTERNAL_ERROR', 'Could not capture screenshot.');
+    const previousMemory = readSiteMemory(active.url) || rememberSiteMemory(active.url, { title: active.title || '', kind: 'site-memory' });
+    const previousPath = params.baselinePath || previousMemory.lastScreenshotPath || null;
+    let comparison = {
+      compared: false,
+      reason: previousPath ? null : 'No baseline screenshot available.',
+    };
+    if (previousPath && fs.existsSync(previousPath)) {
+      const previousBuffer = fs.readFileSync(previousPath);
+      const currentBuffer = fs.readFileSync(currentPath);
+      comparison = {
+        compared: true,
+        baselinePath: previousPath,
+        currentPath,
+        ...comparePngBuffers(previousBuffer, currentBuffer),
+      };
+    }
+    const memory = rememberSiteMemory(active.url, {
+      title: active.title || '',
+      lastScreenshotPath: currentPath,
+      lastVisualCompare: comparison,
+      kind: 'visual-compare',
+    });
+    return {
+      ok: true,
+      site: active.url,
+      currentPath,
+      baselinePath: previousPath,
+      comparison,
+      memory,
+    };
   }
 
   if (action === 'universalFileUploadPreflight' || action === 'universalFileUploadPreview') {

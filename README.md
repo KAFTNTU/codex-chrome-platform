@@ -14,10 +14,11 @@ I’m designed for real browser tasks, not just demos:
 - Read tables, visible text, HTML, console output, and network activity.
 - Take a deep DOM snapshot with forms, controls, frames, and shadow hosts.
 - Read a compact DOM outline or inspect a single element in detail.
+- Summarize a page, split it into sections, detect modals, compare screenshots, and remember the last state for a site.
 - Find a control by text, label, placeholder, name, id, or role across the current page.
-- Summarize a page, split it into sections, detect modals, and compare page changes over time.
 - Find the next visible control, match repeated UI blocks, resolve a DOM route, and click by intent.
-- Watch downloads and keep a short memory of page/session changes.
+- Run OCR on screenshots when text is baked into images or canvas elements.
+- Watch downloads, keep a short memory of page/session changes, and build a site memory by host.
 - Open a fresh browser search tab from a query without you opening a page first.
 - Open a Reddit compose draft in your personal browser and prefill a post title/body.
 - Fill common form fields by label, name, placeholder, id, or aria hints, then click the right button when you ask me to.
@@ -95,6 +96,12 @@ Common examples:
 - `chrome_bridge_semantic_click`
 - `chrome_bridge_page_diff_memory`
 - `chrome_bridge_resolve_dom_route`
+- `chrome_bridge_page_intent_map`
+- `chrome_bridge_ocr_from_screenshot`
+- `chrome_bridge_visual_page_compare`
+- `chrome_bridge_site_memory_snapshot`
+- `chrome_bridge_get_site_memory`
+- `chrome_bridge_clear_site_memory`
 - `chrome_bridge_watch_downloads`
 - `chrome_bridge_wait_for_download`
 - `chrome_bridge_save_form_profile`
@@ -134,6 +141,8 @@ The flow is:
 - Logs: `%USERPROFILE%\.chrome-bridge\logs\`
 - Output: `%USERPROFILE%\.chrome-bridge\output\`
 - Preflight copies: `%USERPROFILE%\.chrome-bridge\preflight\`
+- OCR cache: `%USERPROFILE%\.chrome-bridge\ocr-cache\`
+- Site memory: `%USERPROFILE%\.chrome-bridge\site-memory.json`
 
 ## Security notes
 

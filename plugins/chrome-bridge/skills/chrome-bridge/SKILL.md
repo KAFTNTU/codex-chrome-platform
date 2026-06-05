@@ -54,6 +54,12 @@ That file explains:
 - `chrome_bridge_semantic_click`: click by intent and visible meaning
 - `chrome_bridge_page_diff_memory`: compare the page to the previous short-term snapshot
 - `chrome_bridge_resolve_dom_route`: get the frame/shadow/ancestry route for an element
+- `chrome_bridge_page_intent_map`: map visible controls to likely intents
+- `chrome_bridge_ocr_from_screenshot`: OCR text from screenshots or element captures
+- `chrome_bridge_visual_page_compare`: compare a screenshot against the previous baseline
+- `chrome_bridge_site_memory_snapshot`: save a page summary into site memory
+- `chrome_bridge_get_site_memory`: inspect saved site memory for the current host
+- `chrome_bridge_clear_site_memory`: clear site memory for the current host
 - `chrome_bridge_get_elements`: visible links, buttons, inputs, or all common interactives
 - `chrome_bridge_scroll`: scroll active tab vertically
 - `chrome_bridge_scroll_to_selector`: scroll to a CSS selector
