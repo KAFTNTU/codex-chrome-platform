@@ -339,6 +339,7 @@ function normalizeCommandAction(action) {
     pageinteractmap: 'pageInteractMap',
     pageinteractclick: 'pageInteractClick',
     semanticclick: 'semanticClick',
+    semanticsearch: 'semanticClick',
     finddomcontrol: 'findDomControl',
     pagediffmemory: 'pageDiffMemory',
     pageinteracttype: 'pageInteractType',
