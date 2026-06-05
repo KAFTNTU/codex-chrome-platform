@@ -8,6 +8,7 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Inspect the active Chrome / Edge tab in real time.
 - Read visible text, HTML, screenshots, tables, console logs, and network events.
 - Navigate tabs, click, type, scroll, select, and work with forms.
+- Use the universal form helper when you need to fill common fields by label/name/placeholder/id and then click the right button.
 - When the bridge is connected, search and navigation should happen in the user's personal Chrome / Edge session, not the in-app browser.
 - Create and maintain a Codex tab workspace group for related tabs.
 - Use guarded file upload flows for files the user already owns.
@@ -38,6 +39,7 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `screenshot` or `elementScreenshot` when layout matters.
 - Use `waitForText` / `waitForSelector` before clicking dynamic UI.
 - Use `smartFocus` to find the right field when the form is cluttered.
+- Use `universalFormAssist` when you want to fill several common fields quickly across different sites.
 - Use tab groups when you need several related pages open together.
 - Use the upload assistant only for user-owned completed files.
 - Use preflight before attach/submit when file integrity matters.

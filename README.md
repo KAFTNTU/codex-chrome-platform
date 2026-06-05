@@ -14,6 +14,7 @@ I’m designed for real browser tasks, not just demos:
 - Read tables, visible text, HTML, console output, and network activity.
 - Open a fresh browser search tab from a query without you opening a page first.
 - Open a Reddit compose draft in your personal browser and prefill a post title/body.
+- Fill common form fields by label, name, placeholder, id, or aria hints, then click the right button when you ask me to.
 - When the bridge is connected, I work in your personal Chrome / Edge browser session, not the in-app browser.
 - Keep related tabs together in a Codex workspace tab group.
 - Help with guarded file uploads when the file already belongs to you.
@@ -75,6 +76,7 @@ Common examples:
 - `chrome_bridge_add_active_tab_to_workspace`
 - `chrome_bridge_universal_file_upload_preflight`
 - `chrome_bridge_universal_file_upload_attach_and_submit`
+- `chrome_bridge_universal_form_assist`
 
 ## Quick start
 

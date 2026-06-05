@@ -57,6 +57,7 @@ That file explains:
 - `chrome_bridge_back`: go back in history
 - `chrome_bridge_forward`: go forward in history
 - `chrome_bridge_reload`: reload the current tab
+- `chrome_bridge_universal_form_assist`: fill common fields by label/name/placeholder/id and optionally click a button after confirmation
 - `chrome_bridge_file_upload_assistant_*`: guarded file attachment flows for user-owned files
 - `chrome_bridge_universal_file_upload_*`: universal guarded file lookup/attach/preflight flows
 

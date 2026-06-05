@@ -35,6 +35,7 @@ TOOLS = [
     {"name":"chrome_bridge_list_frames","description":"List iframe/frame elements on the page.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_get_forms","description":"Inspect forms and fields on the page.","inputSchema":{"type":"object","properties":{"maxForms":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_fill_fields","description":"Fill multiple fields by selector in one call.","inputSchema":{"type":"object","properties":{"entries":{"type":"array","items":{"type":"object","properties":{"selector":{"type":"string"},"value":{"type":"string"},"checked":{"type":"boolean"},"selectValue":{"type":"string"}},"required":["selector"],"additionalProperties":False}}},"required":["entries"],"additionalProperties":False}},
+    {"name":"chrome_bridge_universal_form_assist","description":"Find common form fields by label/name/placeholder/id and fill them, optionally clicking a button by text after confirmation.","inputSchema":{"type":"object","properties":{"fields":{"type":"object","additionalProperties":True},"entries":{"type":"array","items":{"type":"object","properties":{"key":{"type":"string"},"name":{"type":"string"},"label":{"type":"string"},"field":{"type":"string"},"selector":{"type":"string"},"value":{"type":"string"},"type":{"type":"string"},"kind":{"type":"string"},"checked":{"type":"boolean"},"selectValue":{"type":"string"},"optionText":{"type":"string"},"optionValue":{"type":"string"},"buttonText":{"type":"string"},"buttonSelector":{"type":"string"},"exactButton":{"type":"boolean"},"clickButton":{"type":"boolean"},"confirmSubmit":{"type":"boolean"}},"additionalProperties":True}},"buttonText":{"type":"string"},"buttonSelector":{"type":"string"},"clickButton":{"type":"boolean"},"confirmSubmit":{"type":"boolean"},"exactButton":{"type":"boolean"},"allowFallback":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_get_elements","description":"List visible links, buttons, inputs, or all common interactive elements on the active tab.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["all","links","buttons","inputs"]},"maxItems":{"type":"integer","description":"Maximum number of elements to return."}},"additionalProperties":False}},
     {"name":"chrome_bridge_scroll","description":"Scroll the active tab vertically by a number of pixels.","inputSchema":{"type":"object","properties":{"deltaY":{"type":"integer","description":"Pixels to scroll. Positive scrolls down."}},"required":["deltaY"],"additionalProperties":False}},
     {"name":"chrome_bridge_smooth_scroll","description":"Scroll the active tab in smaller human-like steps.","inputSchema":{"type":"object","properties":{"totalY":{"type":"integer"},"stepY":{"type":"integer"},"delayMs":{"type":"integer"}},"required":["totalY"],"additionalProperties":False}},
@@ -224,6 +225,14 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "maxForms" in arguments: payload["maxForms"]=int(arguments["maxForms"])
         return as_text_content(call_bridge("getForms",payload))
     if name=="chrome_bridge_fill_fields": return as_text_content(call_bridge("fillFields",{"entries":arguments["entries"]}))
+    if name=="chrome_bridge_universal_form_assist":
+        payload={}
+        for field in ("fields","entries","buttonText","buttonSelector","exactButton","allowFallback"):
+            if field in arguments: payload[field]=arguments[field]
+        for field in ("clickButton","confirmSubmit"):
+            if field in arguments: payload[field]=bool(arguments[field])
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("universalFormAssist",payload))
     if name=="chrome_bridge_get_elements":
         payload={}
         if "kind" in arguments: payload["kind"]=arguments["kind"]

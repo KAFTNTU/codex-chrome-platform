@@ -1315,6 +1315,522 @@ async function redditComposeDraft(params = {}, tabId = null) {
   };
 }
 
+async function universalFormAssist(params = {}, tabId = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  return await runAndRemember('universalFormAssist', (payload) => {
+    const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const lower = (value) => normalize(value).toLowerCase();
+    const isVisible = (el) => {
+      if (!el) return false;
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const deepQueryOne = (selector) => {
+      const roots = [document];
+      while (roots.length) {
+        const root = roots.shift();
+        const found = root.querySelector?.(selector);
+        if (found) return found;
+        const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+        for (const node of nodes) {
+          if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+      }
+      return null;
+    };
+    const deepQueryAll = (selector) => {
+      const items = [];
+      const seen = new Set();
+      const roots = [document];
+      while (roots.length) {
+        const root = roots.shift();
+        const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll(selector)) : [];
+        for (const node of nodes) {
+          if (seen.has(node)) continue;
+          seen.add(node);
+          items.push(node);
+        }
+        const all = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+        for (const node of all) {
+          if (node.shadowRoot) roots.push(node.shadowRoot);
+        }
+      }
+      return items;
+    };
+    const setNativeValue = (el, value) => {
+      const next = value == null ? '' : String(value);
+      const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (setter) setter.call(el, next);
+      else el.value = next;
+      el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      return true;
+    };
+    const setContentEditableValue = (el, value) => {
+      const next = value == null ? '' : String(value);
+      el.focus();
+      el.textContent = next;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: next }));
+      el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      return true;
+    };
+    const getLabelText = (el) => {
+      const parts = [];
+      if (el.id) {
+        for (const label of Array.from(document.querySelectorAll('label'))) {
+          if (label.htmlFor === el.id) {
+            parts.push(label.innerText || label.textContent || '');
+          }
+        }
+        const ariaIds = String(el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+        for (const id of ariaIds) {
+          const node = deepQueryOne(`#${CSS.escape(id)}`);
+          if (node) parts.push(node.innerText || node.textContent || '');
+        }
+      }
+      const closestLabel = el.closest('label');
+      if (closestLabel) parts.push(closestLabel.innerText || closestLabel.textContent || '');
+      const parentText = el.parentElement?.innerText || '';
+      if (parentText) parts.push(parentText);
+      return normalize(parts.join(' '));
+    };
+    const getControlHint = (el) => {
+      return normalize([
+        el.getAttribute('aria-label'),
+        el.getAttribute('placeholder'),
+        el.getAttribute('name'),
+        el.id,
+        el.getAttribute('title'),
+        el.getAttribute('autocomplete'),
+        el.getAttribute('data-testid'),
+        el.getAttribute('data-test'),
+        el.getAttribute('role'),
+        getLabelText(el),
+      ].filter(Boolean).join(' '));
+    };
+    const aliasHints = {
+      name: ['name', 'full name', 'your name', 'ім', 'ім’я', 'імя', 'фио', 'fio'],
+      firstName: ['first name', 'given name', 'ім’я', 'імя', 'firstname', 'name'],
+      lastName: ['last name', 'surname', 'family name', 'прізвище', 'фамилия'],
+      middleName: ['middle name', 'patronymic', 'по батькові'],
+      age: ['age', 'years', 'вік', 'лет'],
+      birthDate: ['birth date', 'date of birth', 'dob', 'birthday', 'дата народження', 'birthdate'],
+      email: ['email', 'e-mail', 'mail', 'пошта', 'email address'],
+      phone: ['phone', 'mobile', 'tel', 'telephone', 'телефон', 'номер'],
+      city: ['city', 'town', 'місто'],
+      country: ['country', 'nation', 'країна'],
+      address: ['address', 'street', 'адреса', 'вулиця'],
+      university: ['university', 'institution', 'college', 'виш', 'університет'],
+      group: ['group', 'class', 'section', 'group number', 'група'],
+      login: ['login', 'username', 'user', 'account', 'username or email'],
+      password: ['password', 'pass', 'пароль'],
+      search: ['search', 'query', 'find', 'пошук', 'запит'],
+      message: ['message', 'text', 'body', 'повідомлення', 'текст'],
+    };
+    const typeHints = {
+      name: ['text', 'search'],
+      firstName: ['text', 'search'],
+      lastName: ['text', 'search'],
+      middleName: ['text', 'search'],
+      age: ['number', 'text'],
+      birthDate: ['date', 'text'],
+      email: ['email', 'text'],
+      phone: ['tel', 'text'],
+      city: ['text', 'search'],
+      country: ['text', 'search'],
+      address: ['text', 'search'],
+      university: ['text', 'search'],
+      group: ['text', 'search', 'number'],
+      login: ['text', 'email', 'search'],
+      password: ['password', 'text'],
+      search: ['search', 'text'],
+      message: ['text', 'textarea'],
+    };
+    const deepControls = deepQueryAll('input, textarea, select, [contenteditable="true"], button, [role="button"]')
+      .filter(isVisible)
+      .map((el) => {
+        const tag = el.tagName.toLowerCase();
+        const type = (el.getAttribute('type') || '').toLowerCase();
+        const labelText = getLabelText(el);
+        const hint = getControlHint(el);
+        return {
+          el,
+          tag,
+          type,
+          labelText,
+          hint,
+          valuePreview: normalize('value' in el ? el.value : el.textContent || '').slice(0, 120),
+        };
+      });
+    const fieldEntries = [];
+    if (Array.isArray(payload.entries)) {
+      fieldEntries.push(...payload.entries);
+    }
+    if (payload.fields && typeof payload.fields === 'object' && !Array.isArray(payload.fields)) {
+      for (const [key, value] of Object.entries(payload.fields)) {
+        fieldEntries.push({ key, value });
+      }
+    }
+    if (Array.isArray(payload.fields)) {
+      fieldEntries.push(...payload.fields);
+    }
+    if (!fieldEntries.length && payload.key != null) {
+      fieldEntries.push({ key: payload.key, value: payload.value });
+    }
+    const hintSetFromEntry = (entry) => {
+      const rawKey = normalize(entry.key ?? entry.name ?? entry.label ?? entry.field ?? entry.selector ?? '');
+      const manualHints = [];
+      if (rawKey) manualHints.push(rawKey);
+      if (entry.hint) manualHints.push(normalize(entry.hint));
+      if (entry.label) manualHints.push(normalize(entry.label));
+      if (entry.name) manualHints.push(normalize(entry.name));
+      const aliasKey = lower(rawKey).replace(/\s+/g, '');
+      const alias = aliasHints[aliasKey] || aliasHints[rawKey] || aliasHints[lower(rawKey)] || [];
+      manualHints.push(...alias);
+      return [...new Set(manualHints.filter(Boolean).map((item) => normalize(item)))];
+    };
+    const typeMatches = (control, entry) => {
+      const desired = normalize(entry.type || entry.kind || entry.inputType || '');
+      if (!desired) return true;
+      const desiredList = desired.split(/[|,]/).map((item) => lower(item).trim()).filter(Boolean);
+      const candidate = lower(control.type || control.tag);
+      return desiredList.some((item) => candidate === item || candidate.includes(item));
+    };
+    const scoreControl = (control, entry, needles) => {
+      let score = 0;
+      const candidate = lower(control.hint);
+      const label = lower(control.labelText);
+      const combined = `${candidate} ${label}`;
+      const controlType = lower(control.type || control.tag);
+      const key = lower(entry.key ?? entry.name ?? entry.label ?? entry.field ?? '');
+      if (entry.selector) {
+        return 10000;
+      }
+      if (!typeMatches(control, entry)) {
+        return -1;
+      }
+      for (const needle of needles) {
+        const n = lower(needle);
+        if (!n) continue;
+        if (combined === n) score += 700;
+        if (candidate === n) score += 650;
+        if (label === n) score += 650;
+        if (combined.includes(n)) score += 300;
+        if (candidate.includes(n)) score += 260;
+        if (label.includes(n)) score += 260;
+        if (combined.startsWith(n)) score += 140;
+        if (candidate.startsWith(n)) score += 120;
+        if (label.startsWith(n)) score += 120;
+      }
+      if (key) {
+        if (control.id && lower(control.id) === key) score += 280;
+        if (control.el.getAttribute('name') && lower(control.el.getAttribute('name')) === key) score += 260;
+        if (control.el.getAttribute('autocomplete') && lower(control.el.getAttribute('autocomplete')).includes(key)) score += 120;
+      }
+      if (control.el.getAttribute('required') !== null) score += 8;
+      if (controlType === 'text' || controlType === 'search' || controlType === 'email' || controlType === 'tel' || controlType === 'number' || controlType === 'date' || controlType === 'textarea') {
+        score += 20;
+      }
+      if (entry.type && typeHints[lower(entry.key ?? entry.name ?? entry.label ?? '')]?.includes(controlType)) {
+        score += 140;
+      }
+      return score;
+    };
+    const selectOption = (el, entry) => {
+      const raw = entry.selectValue ?? entry.optionValue ?? entry.value ?? '';
+      const labelNeedle = normalize(entry.optionText ?? entry.optionLabel ?? '');
+      const options = Array.from(el.options || []);
+      let chosen = null;
+      if (raw !== '') {
+        chosen = options.find((option) => option.value === String(raw)) || null;
+      }
+      if (!chosen && labelNeedle) {
+        const needle = lower(labelNeedle);
+        chosen = options.find((option) => lower(option.label || option.textContent || '').includes(needle)) || null;
+      }
+      if (!chosen && raw !== '') {
+        const needle = lower(raw);
+        chosen = options.find((option) => lower(option.textContent || '').includes(needle)) || null;
+      }
+      if (!chosen && raw !== '') {
+        chosen = options.find((option) => lower(option.textContent || '') === lower(raw)) || null;
+      }
+      if (!chosen) {
+        throw new Error(`No matching option found for ${entry.key || entry.name || entry.label || 'select field'}`);
+      }
+      el.value = chosen.value;
+      el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      return chosen;
+    };
+    const fillControl = (control, entry) => {
+      const el = control.el;
+      const rawValue = entry.value;
+      const wantChecked = typeof entry.checked === 'boolean'
+        ? entry.checked
+        : typeof rawValue === 'boolean'
+          ? rawValue
+          : null;
+      if (el instanceof HTMLInputElement) {
+        const type = lower(el.type);
+        if (type === 'checkbox' || type === 'radio') {
+          if (wantChecked == null) {
+            if (rawValue == null) return { kind: type, skipped: true };
+            el.checked = !!rawValue;
+          } else {
+            el.checked = wantChecked;
+          }
+          el.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+          return { kind: type, checked: el.checked };
+        }
+        if (type === 'file') {
+          throw new Error('File inputs are not handled by universal form assist');
+        }
+        setNativeValue(el, rawValue);
+        return { kind: type || 'text', value: String(rawValue ?? '') };
+      }
+      if (el instanceof HTMLTextAreaElement) {
+        setNativeValue(el, rawValue);
+        return { kind: 'textarea', value: String(rawValue ?? '') };
+      }
+      if (el instanceof HTMLSelectElement) {
+        const chosen = selectOption(el, entry);
+        return { kind: 'select', value: chosen.value, label: chosen.label || chosen.textContent || '' };
+      }
+      if (el.isContentEditable) {
+        setContentEditableValue(el, rawValue);
+        return { kind: 'contenteditable', value: String(rawValue ?? '') };
+      }
+      throw new Error(`Element is not fillable: ${control.tag}`);
+    };
+    const findBestControl = (entry) => {
+      const selector = normalize(entry.selector || entry.fieldSelector || '');
+      if (selector) {
+        const direct = deepQueryOne(selector);
+        if (!direct) return null;
+        const rect = direct.getBoundingClientRect();
+        return {
+          el: direct,
+          tag: direct.tagName.toLowerCase(),
+          type: (direct.getAttribute('type') || '').toLowerCase(),
+          labelText: getLabelText(direct),
+          hint: getControlHint(direct),
+          valuePreview: normalize('value' in direct ? direct.value : direct.textContent || '').slice(0, 120),
+          rect,
+        };
+      }
+      const needles = hintSetFromEntry(entry);
+      const ranked = deepControls
+        .map((control) => ({
+          ...control,
+          score: scoreControl(control, entry, needles),
+        }))
+        .filter((item) => item.score >= 0)
+        .sort((a, b) => b.score - a.score);
+      return {
+        best: ranked[0] || null,
+        alternatives: ranked.slice(1, 5).map((item) => ({
+          tag: item.tag,
+          type: item.type || null,
+          labelText: item.labelText || '',
+          hint: item.hint.slice(0, 140),
+          score: item.score,
+        })),
+      };
+    };
+    const buttonLikeNeedles = ['submit', 'send', 'save', 'continue', 'next', 'login', 'sign in', 'sign up', 'register', 'finish', 'upload', 'відправ', 'надісл', 'зберегти', 'далі', 'продовж', 'увійти', 'зареєстр', 'ок', 'apply'];
+    const isSubmitLike = (text) => {
+      const value = lower(text);
+      return buttonLikeNeedles.some((needle) => value.includes(lower(needle)));
+    };
+    const findAndClickButton = (request) => {
+      const selector = normalize(request.buttonSelector || request.selector || '');
+      let button = null;
+      if (selector) {
+        button = deepQueryOne(selector);
+        if (!button) throw new Error(`Button not found: ${selector}`);
+      } else {
+        const needles = [request.buttonText, request.text, request.label, request.value, request.key].map((item) => normalize(item)).filter(Boolean);
+        const candidates = deepQueryAll('button, input[type="button"], input[type="submit"], a[role="button"], [role="button"], [onclick]')
+          .filter(isVisible)
+          .map((el) => ({
+            el,
+            text: normalize([
+              el.innerText,
+              el.textContent,
+              el.getAttribute('aria-label'),
+              el.getAttribute('title'),
+              el.getAttribute('value'),
+            ].filter(Boolean).join(' ')),
+          }))
+          .filter((item) => item.text);
+        const ranked = candidates
+          .map((item) => {
+            let score = 0;
+            for (const needle of needles) {
+              const n = lower(needle);
+              if (!n) continue;
+              if (lower(item.text) === n) score += 1000;
+              if (lower(item.text).startsWith(n)) score += 700;
+              if (lower(item.text).includes(n)) score += 500;
+            }
+            if (request.exactButton) {
+              score += needles.some((needle) => lower(item.text) === lower(needle)) ? 40 : 0;
+            }
+            return { ...item, score };
+          })
+          .filter((item) => item.score > 0)
+          .sort((a, b) => b.score - a.score);
+        button = ranked[0]?.el || null;
+        if (!button && request.allowFallback) {
+          button = candidates[0]?.el || null;
+        }
+        if (!button) return { clicked: false, reason: 'Button not found', buttonText: request.buttonText || null };
+        if (!ranked[0] && !request.allowFallback) {
+          return { clicked: false, reason: 'Button not matched', buttonText: request.buttonText || null };
+        }
+        const matchedText = ranked[0]?.text || candidates[0]?.text || '';
+        const submitLike = isSubmitLike(matchedText);
+        if (submitLike && !request.confirmSubmit) {
+          return {
+            clicked: false,
+            blocked: true,
+            reason: 'CONFIRMATION_REQUIRED',
+            matchedText,
+          };
+        }
+        button.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        const rect = button.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const eventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1, view: window };
+        button.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+        button.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        button.dispatchEvent(new PointerEvent('pointerup', eventInit));
+        button.dispatchEvent(new MouseEvent('mouseup', eventInit));
+        button.dispatchEvent(new MouseEvent('click', eventInit));
+        if (typeof button.click === 'function') button.click();
+        return {
+          clicked: true,
+          selector: selector || null,
+          matchedText,
+          submitLike,
+        };
+      }
+      const text = normalize([
+        button.innerText,
+        button.textContent,
+        button.getAttribute('aria-label'),
+        button.getAttribute('title'),
+        button.getAttribute('value'),
+      ].filter(Boolean).join(' '));
+      const submitLike = isSubmitLike(text);
+      if (submitLike && !request.confirmSubmit) {
+        return {
+          clicked: false,
+          blocked: true,
+          reason: 'CONFIRMATION_REQUIRED',
+          matchedText: text,
+        };
+      }
+      button.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+      const rect = button.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const eventInit = { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0, buttons: 1, view: window };
+      button.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+      button.dispatchEvent(new MouseEvent('mousedown', eventInit));
+      button.dispatchEvent(new PointerEvent('pointerup', eventInit));
+      button.dispatchEvent(new MouseEvent('mouseup', eventInit));
+      button.dispatchEvent(new MouseEvent('click', eventInit));
+      if (typeof button.click === 'function') button.click();
+      return {
+        clicked: true,
+        selector: selector || null,
+        matchedText: text,
+        submitLike,
+      };
+    };
+    const report = {
+      ok: true,
+      title: document.title,
+      url: location.href,
+      fields: [],
+      unmatched: [],
+      button: null,
+    };
+    for (const entry of fieldEntries) {
+      const key = normalize(entry.key ?? entry.name ?? entry.label ?? entry.field ?? entry.selector ?? '');
+      const value = entry.value;
+      try {
+        const match = findBestControl(entry);
+        const control = match?.best || (match?.el ? match : null);
+        if (!control?.el) {
+          report.unmatched.push({
+            key: key || null,
+            valuePreview: String(value ?? '').slice(0, 120),
+            reason: 'FIELD_NOT_FOUND',
+            alternatives: match?.alternatives || [],
+          });
+          continue;
+        }
+        control.el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        control.el.focus();
+        const filled = fillControl(control, entry);
+        report.fields.push({
+          key: key || null,
+          matchedTag: control.tag,
+          matchedType: control.type || null,
+          matchedHint: control.hint.slice(0, 180),
+          valuePreview: String(value ?? '').slice(0, 120),
+          ...filled,
+        });
+      } catch (error) {
+        report.ok = false;
+        report.fields.push({
+          key: key || null,
+          valuePreview: String(value ?? '').slice(0, 120),
+          ok: false,
+          error: error.message || String(error),
+        });
+      }
+    }
+    if (payload.clickButton || payload.buttonText || payload.buttonSelector) {
+      try {
+        const buttonResult = findAndClickButton(payload);
+        report.button = buttonResult;
+        if (buttonResult?.blocked) {
+          report.ok = false;
+        }
+      } catch (error) {
+        report.ok = false;
+        report.button = {
+          clicked: false,
+          error: error.message || String(error),
+        };
+      }
+    }
+    return report;
+  }, [{
+    fields: params.fields || null,
+    entries: params.entries || null,
+    key: params.key || null,
+    value: params.value,
+    clickButton: !!params.clickButton,
+    confirmSubmit: !!params.confirmSubmit,
+    buttonText: params.buttonText || null,
+    buttonSelector: params.buttonSelector || null,
+    exactButton: !!params.exactButton,
+    allowFallback: params.allowFallback === true,
+  }], resolvedTabId, () => ({
+    fieldCount: Array.isArray(params.entries) ? params.entries.length : (params.fields && typeof params.fields === 'object' ? Object.keys(params.fields).length : 0),
+    clickButton: !!params.clickButton,
+  }));
+}
+
 async function createCodexTabGroup(url = 'about:blank', options = {}) {
   const tab = await chrome.tabs.create({ url, active: options.active !== false });
   const groupId = await createWorkspaceGroupForTab(tab.id, options);
@@ -1668,6 +2184,19 @@ async function handleCommand(command) {
         body: params.body || '',
         timeoutMs: params.timeoutMs || 20000,
         titleContains: params.titleContains || 'Reddit',
+      }, params.tabId ?? null);
+    case 'universalFormAssist':
+      return await universalFormAssist({
+        fields: params.fields || null,
+        entries: params.entries || null,
+        key: params.key || null,
+        value: params.value,
+        clickButton: !!params.clickButton,
+        confirmSubmit: !!params.confirmSubmit,
+        buttonText: params.buttonText || null,
+        buttonSelector: params.buttonSelector || null,
+        exactButton: !!params.exactButton,
+        allowFallback: params.allowFallback === true,
       }, params.tabId ?? null);
     case 'createCodexTabGroup':
       return await createCodexTabGroup(params.url || 'about:blank', params);
