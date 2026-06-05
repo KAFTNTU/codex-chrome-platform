@@ -243,10 +243,16 @@ async function saveAssistantSettings() {
 }
 
 async function runAssistantTask() {
+  const taskText = el('assistantTask').value.trim();
+  if (!taskText) return;
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
   try {
     const response = await chrome.runtime.sendMessage({
       type: 'popup-run-assistant-task',
-      assistantTask: el('assistantTask').value.trim(),
+      assistantTask: taskText,
       assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
       assistantModel: el('assistantModel').value.trim(),
       assistantApiKey: el('assistantApiKey').value.trim(),
@@ -258,6 +264,14 @@ async function runAssistantTask() {
       showNotice(response.assistantReply);
     }
     el('assistantTask').value = '';
+    await chrome.runtime.sendMessage({
+      type: 'popup-save-assistant-settings',
+      assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
+      assistantModel: el('assistantModel').value.trim(),
+      assistantApiKey: el('assistantApiKey').value.trim(),
+      assistantTask: '',
+      assistantRememberApiKey: !!el('rememberApiKey').checked,
+    });
   } catch (error) {
     showNotice(error.message || String(error), true);
     return;
@@ -267,6 +281,10 @@ async function runAssistantTask() {
 
 async function clearAssistantTask() {
   el('assistantTask').value = '';
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
   try {
     await chrome.runtime.sendMessage({
       type: 'popup-save-assistant-settings',
