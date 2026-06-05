@@ -33,6 +33,10 @@ function renderAccessProfile(profile) {
 
 function renderAssistantChat(chatLog) {
   const list = el('assistantChatList');
+  const prevScrollTop = list.scrollTop;
+  const prevScrollHeight = list.scrollHeight || 0;
+  const prevClientHeight = list.clientHeight || 0;
+  const wasAtBottom = prevScrollTop + prevClientHeight >= prevScrollHeight - 24;
   const items = Array.isArray(chatLog) ? chatLog.slice().reverse() : [];
   if (!items.length) {
     list.innerHTML = '<div class="empty">No messages yet</div>';
@@ -50,7 +54,12 @@ function renderAssistantChat(chatLog) {
       </div>
     `;
   }).join('');
-  list.scrollTop = list.scrollHeight;
+  if (wasAtBottom) {
+    list.scrollTop = list.scrollHeight;
+  } else {
+    const maxScrollTop = Math.max(0, list.scrollHeight - list.clientHeight);
+    list.scrollTop = Math.min(prevScrollTop, maxScrollTop);
+  }
 }
 
 function renderConnectionDetailsVisibility() {
@@ -400,6 +409,10 @@ el('assistantTask').addEventListener('keydown', (event) => {
     void runAssistantTask();
   }
 });
+
+el('assistantChatList')?.addEventListener('wheel', (event) => {
+  event.stopPropagation();
+}, { passive: true });
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {

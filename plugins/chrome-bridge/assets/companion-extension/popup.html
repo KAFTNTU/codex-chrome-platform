@@ -313,6 +313,9 @@
       overflow: auto;
       overflow-x: hidden;
       padding-right: 2px;
+      overscroll-behavior: contain;
+      -webkit-overflow-scrolling: touch;
+      scroll-behavior: smooth;
     }
     .chat-msg {
       max-width: 100%;
@@ -345,6 +348,23 @@
 </head>
 <body>
   <div class="wrap">
+    <div class="card">
+      <div class="title">
+        <span>Chat history</span>
+        <button id="clearAssistantChat">Clear chat</button>
+      </div>
+      <div id="assistantChatList" class="chat-history"></div>
+      <div class="row">
+        <div class="sub">What should AI do?</div>
+        <textarea id="assistantTask" placeholder="Describe the task for the assistant..."></textarea>
+        <div class="tiny">Write here and press Send. The text is saved locally and sent to the bridge.</div>
+      </div>
+      <div class="inline">
+        <button id="sendAssistantTask" class="primary">Send</button>
+        <button id="clearAssistantTask">Clear draft</button>
+      </div>
+    </div>
+
     <div class="card">
       <div class="title">
         <span>Bridge</span>
@@ -407,23 +427,6 @@
       <div class="row">
         <div class="sub">Error</div>
         <code id="error"></code>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="title">
-        <span>Chat history</span>
-        <button id="clearAssistantChat">Clear chat</button>
-      </div>
-      <div id="assistantChatList" class="chat-history"></div>
-      <div class="row">
-        <div class="sub">What should AI do?</div>
-        <textarea id="assistantTask" placeholder="Describe the task for the assistant..."></textarea>
-        <div class="tiny">Write here and press Send. The text is saved locally and sent to the bridge.</div>
-      </div>
-      <div class="inline">
-        <button id="sendAssistantTask" class="primary">Send</button>
-        <button id="clearAssistantTask">Clear draft</button>
       </div>
     </div>
 
