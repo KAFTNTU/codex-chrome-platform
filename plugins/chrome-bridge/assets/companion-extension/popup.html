@@ -278,6 +278,38 @@
       border-color: #4f89b9;
       color: #f4fbff;
     }
+    .chat-history {
+      display: grid;
+      gap: 6px;
+      max-height: 220px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .chat-msg {
+      max-width: 92%;
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      display: grid;
+      gap: 3px;
+    }
+    .chat-msg.user {
+      margin-left: auto;
+      background: #17324b;
+      border-color: #315f8b;
+    }
+    .chat-msg.assistant {
+      margin-right: auto;
+      background: #1a222e;
+    }
+    .chat-meta {
+      font-size: 10px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
   </style>
 </head>
 <body>
@@ -310,6 +342,13 @@
         <input id="assistantApiKey" type="password" placeholder="Paste your API key" />
       </div>
       <div class="row">
+        <label class="toggle">
+          <input id="rememberApiKey" type="checkbox" />
+          <span>Remember API key</span>
+        </label>
+        <div class="tiny">Stored locally only when enabled.</div>
+      </div>
+      <div class="row">
         <div class="sub">What should AI do?</div>
         <textarea id="assistantTask" placeholder="Describe the task for the assistant..."></textarea>
         <div class="tiny">The task is saved locally in your browser and sent to the bridge when you press Run task.</div>
@@ -326,6 +365,14 @@
         </label>
       </div>
       <div class="row notice" id="notice"></div>
+    </div>
+
+    <div class="card">
+      <div class="title">
+        <span>Chat history</span>
+        <button id="clearAssistantChat">Clear chat</button>
+      </div>
+      <div id="assistantChatList" class="chat-history"></div>
     </div>
 
     <div class="card">

@@ -18,6 +18,7 @@ let state = {
   assistantApiEndpoint: '',
   assistantApiKey: '',
   assistantTask: '',
+  assistantRememberApiKey: false,
   accessProfile: 'controlled',
   mode: 'safe',
   mouseCueEnabled: true,
@@ -58,6 +59,7 @@ let macroState = {
 };
 let namedRecipes = {};
 let formProfiles = {};
+let assistantChatLog = [];
 
 async function loadState() {
   const stored = await chrome.storage.local.get([
@@ -67,6 +69,8 @@ async function loadState() {
     'assistantApiEndpoint',
     'assistantApiKey',
     'assistantTask',
+    'assistantRememberApiKey',
+    'assistantChatLog',
     'namedRecipes',
     'formProfiles',
     'mouseCueEnabled',
@@ -81,6 +85,7 @@ async function loadState() {
   state.assistantApiEndpoint = stored.assistantApiEndpoint || '';
   state.assistantApiKey = stored.assistantApiKey || '';
   state.assistantTask = stored.assistantTask || '';
+  state.assistantRememberApiKey = stored.assistantRememberApiKey === true;
   state.accessProfile = stored.accessProfile || 'controlled';
   state.mouseCueEnabled = stored.mouseCueEnabled !== false;
   state.workspaceGroupId = Number.isFinite(Number(stored.workspaceGroupId)) ? Number(stored.workspaceGroupId) : null;
@@ -88,13 +93,15 @@ async function loadState() {
   state.workspaceGroupColor = stored.workspaceGroupColor || 'blue';
   namedRecipes = stored.namedRecipes || {};
   formProfiles = stored.formProfiles || {};
+  assistantChatLog = Array.isArray(stored.assistantChatLog) ? stored.assistantChatLog.slice(0, 120) : [];
   await chrome.storage.local.set({
     clientId: state.clientId,
     serverUrl: state.serverUrl,
     bridgeToken: state.bridgeToken,
     assistantApiEndpoint: state.assistantApiEndpoint,
-    assistantApiKey: state.assistantApiKey,
     assistantTask: state.assistantTask,
+    assistantRememberApiKey: state.assistantRememberApiKey,
+    assistantChatLog,
     accessProfile: state.accessProfile,
     mouseCueEnabled: state.mouseCueEnabled,
     workspaceGroupId: state.workspaceGroupId,
@@ -280,6 +287,13 @@ function pushCommandLog(entry) {
     at: new Date().toISOString(),
     ...entry,
   }, ...commandLog].slice(0, MAX_COMMAND_LOG);
+}
+
+function pushAssistantChat(entry) {
+  assistantChatLog = [{
+    at: new Date().toISOString(),
+    ...entry,
+  }, ...assistantChatLog].slice(0, 120);
 }
 
 function recordSessionEvent(tabId, action, details = {}) {
@@ -5286,6 +5300,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         assistantApiEndpoint: state.assistantApiEndpoint,
         assistantApiKey: state.assistantApiKey,
         assistantTask: state.assistantTask,
+        assistantRememberApiKey: state.assistantRememberApiKey,
+        assistantChatLog,
         accessProfile: state.accessProfile,
         mouseCueEnabled: state.mouseCueEnabled,
         bridgeState: state,
@@ -5320,16 +5336,27 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       state.assistantApiEndpoint = String(message.assistantApiEndpoint || '').trim();
       state.assistantApiKey = String(message.assistantApiKey || '').trim();
       state.assistantTask = String(message.assistantTask || '').trim();
+      state.assistantRememberApiKey = message.assistantRememberApiKey === true;
+      if (!state.assistantRememberApiKey) {
+        state.assistantApiKey = state.assistantApiKey; // keep in memory for current session only
+      }
       await chrome.storage.local.set({
         assistantApiEndpoint: state.assistantApiEndpoint,
-        assistantApiKey: state.assistantApiKey,
         assistantTask: state.assistantTask,
+        assistantRememberApiKey: state.assistantRememberApiKey,
+        assistantChatLog,
       });
+      if (state.assistantRememberApiKey) {
+        await chrome.storage.local.set({ assistantApiKey: state.assistantApiKey });
+      } else {
+        await chrome.storage.local.remove('assistantApiKey');
+      }
       sendResponse({
         ok: true,
         assistantApiEndpoint: state.assistantApiEndpoint,
         assistantApiKey: state.assistantApiKey,
         assistantTask: state.assistantTask,
+        assistantRememberApiKey: state.assistantRememberApiKey,
       });
       return;
     }
@@ -5337,13 +5364,26 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       const assistantTask = String(message.assistantTask ?? state.assistantTask ?? '').trim();
       if (assistantTask) {
         state.assistantTask = assistantTask;
-        await chrome.storage.local.set({ assistantTask: state.assistantTask });
+        pushAssistantChat({ role: 'user', text: assistantTask });
+        pushAssistantChat({ role: 'assistant', text: 'Task received by the bridge and queued for execution.' });
+        await chrome.storage.local.set({ assistantTask: state.assistantTask, assistantChatLog });
         pushCommandLog({
           action: 'assistantTask',
           paramsPreview: assistantTask.length > 180 ? `${assistantTask.slice(0, 177)}...` : assistantTask,
         });
       }
-      sendResponse({ ok: true, assistantTask: state.assistantTask });
+      sendResponse({
+        ok: true,
+        assistantTask: state.assistantTask,
+        assistantReply: assistantTask ? 'Task received by the bridge and queued for execution.' : '',
+        assistantChatLog,
+      });
+      return;
+    }
+    if (message?.type === 'popup-clear-assistant-chat') {
+      assistantChatLog = [];
+      await chrome.storage.local.set({ assistantChatLog });
+      sendResponse({ ok: true, assistantChatLog });
       return;
     }
     if (message?.type === 'popup-save-access-profile') {

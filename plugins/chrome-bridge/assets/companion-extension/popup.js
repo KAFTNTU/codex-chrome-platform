@@ -30,6 +30,28 @@ function renderAccessProfile(profile) {
   expanded.classList.toggle('active', currentAccessProfile === 'expanded');
 }
 
+function renderAssistantChat(chatLog) {
+  const list = el('assistantChatList');
+  const items = Array.isArray(chatLog) ? chatLog.slice().reverse() : [];
+  if (!items.length) {
+    list.innerHTML = '<div class="empty">No messages yet</div>';
+    return;
+  }
+  list.innerHTML = items.map((item) => {
+    const role = item.role === 'assistant' ? 'assistant' : 'user';
+    return `
+      <div class="chat-msg ${role}">
+        <div>${esc(item.text || '')}</div>
+        <div class="chat-meta">
+          <span>${role === 'assistant' ? 'Codex' : 'You'}</span>
+          <span>${new Date(item.at || Date.now()).toLocaleTimeString()}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+  list.scrollTop = list.scrollHeight;
+}
+
 function openSettingsModal() {
   const modal = el('settingsModal');
   modal.classList.add('open');
@@ -174,6 +196,7 @@ async function refresh() {
     syncFieldValue('assistantApiEndpoint', state.assistantApiEndpoint || '');
     syncFieldValue('assistantApiKey', state.assistantApiKey || '');
     syncFieldValue('assistantTask', state.assistantTask || '');
+    el('rememberApiKey').checked = !!state.assistantRememberApiKey;
     el('mouseCueEnabled').checked = state.mouseCueEnabled !== false;
     renderStatus(state.bridgeState);
     renderActiveTab(state.activeTab);
@@ -181,12 +204,14 @@ async function refresh() {
     renderNetwork(state.network);
     renderConsole(state.console);
     renderCommands(state.commandLog);
+    renderAssistantChat(state.assistantChatLog || []);
   } catch (error) {
     renderStatus({ connected: false, lastError: error.message || String(error) });
     renderMonitorState({ attachedTabId: null, logs: [] });
     renderNetwork({ logs: [] });
     renderConsole({ logs: [] });
     renderCommands([]);
+    renderAssistantChat([]);
     showNotice('Bridge service worker is restarting', true);
   }
 }
@@ -211,6 +236,7 @@ async function saveAssistantSettings() {
       assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
       assistantApiKey: el('assistantApiKey').value.trim(),
       assistantTask: el('assistantTask').value.trim(),
+      assistantRememberApiKey: !!el('rememberApiKey').checked,
     });
   } catch (error) {
     showNotice(error.message || String(error), true);
@@ -221,16 +247,21 @@ async function saveAssistantSettings() {
 
 async function runAssistantTask() {
   try {
-    await chrome.runtime.sendMessage({
+    const response = await chrome.runtime.sendMessage({
       type: 'popup-run-assistant-task',
       assistantTask: el('assistantTask').value.trim(),
     });
+    if (response?.assistantChatLog) {
+      renderAssistantChat(response.assistantChatLog);
+    }
+    if (response?.assistantReply) {
+      showNotice(response.assistantReply);
+    }
   } catch (error) {
     showNotice(error.message || String(error), true);
     return;
   }
   await refresh();
-  showNotice('Task sent to bridge');
 }
 
 async function clearAssistantTask() {
@@ -241,7 +272,18 @@ async function clearAssistantTask() {
       assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
       assistantApiKey: el('assistantApiKey').value.trim(),
       assistantTask: '',
+      assistantRememberApiKey: !!el('rememberApiKey').checked,
     });
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+    return;
+  }
+  await refresh();
+}
+
+async function clearAssistantChat() {
+  try {
+    await chrome.runtime.sendMessage({ type: 'popup-clear-assistant-chat' });
   } catch (error) {
     showNotice(error.message || String(error), true);
     return;
@@ -309,6 +351,7 @@ el('save').addEventListener('click', saveServerUrl);
 el('saveAssistant').addEventListener('click', saveAssistantSettings);
 el('runAssistantTask').addEventListener('click', runAssistantTask);
 el('clearAssistantTask').addEventListener('click', clearAssistantTask);
+el('clearAssistantChat').addEventListener('click', clearAssistantChat);
 el('statusPill').addEventListener('click', openSettingsModal);
 el('closeSettingsModal').addEventListener('click', closeSettingsModal);
 el('settingsModal').addEventListener('click', (event) => {
@@ -327,7 +370,7 @@ el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);
 
-for (const id of ['serverUrl', 'assistantApiEndpoint', 'assistantApiKey', 'assistantTask']) {
+for (const id of ['serverUrl', 'assistantApiEndpoint', 'assistantApiKey', 'assistantTask', 'rememberApiKey']) {
   el(id).addEventListener('input', () => queueSaveAssistantSettings());
   el(id).addEventListener('change', () => queueSaveAssistantSettings(0));
 }
