@@ -179,7 +179,9 @@ function buildAssistantSystemPrompt(context) {
     'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, clicking visible controls, focusing fields, hovering, and explaining what to do next.',
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
-    'When browser actions are needed, return a JSON object with assistant_text and actions. The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, and waitForPageReady. If no action is needed, actions can be an empty array.',
+    'When browser actions are needed, return ONLY valid JSON with this shape: {"assistant_text":"...","actions":[{"action":"...","params":{}}]}. Do not add markdown, code fences, or extra prose around the JSON.',
+    'The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, waitForPageReady, and scroll or smoothScroll.',
+    'For scrolling, use smoothScroll: negative totalY scrolls up, positive totalY scrolls down. Example: {"assistant_text":"Scrolling up a bit.","actions":[{"action":"smoothScroll","params":{"totalY":-800,"stepY":120,"delayMs":25}}]}',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
@@ -200,6 +202,7 @@ function inferAssistantModel(endpoint) {
 
 async function callAssistantApi({ endpoint, apiKey, model, task, context }) {
   const selectedModel = String(model || '').trim() || inferAssistantModel(endpoint);
+  const endpointText = String(endpoint || '').toLowerCase();
   const body = {
     model: selectedModel,
     messages: [
@@ -213,11 +216,13 @@ async function callAssistantApi({ endpoint, apiKey, model, task, context }) {
       },
     ],
   };
+  if (endpointText.includes('openrouter.ai') || endpointText.includes('openai.com')) {
+    body.response_format = { type: 'json_object' };
+  }
   const headers = {
     'Content-Type': 'application/json',
     Authorization: `Bearer ${apiKey}`,
   };
-  const endpointText = String(endpoint || '').toLowerCase();
   if (endpointText.includes('openrouter.ai')) {
     headers['HTTP-Referer'] = 'https://github.com/KAFTNTU/codex-chrome-platform';
     headers['X-Title'] = 'Bridge Companion';
