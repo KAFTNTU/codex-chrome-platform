@@ -151,69 +151,36 @@ async function persistWorkspaceState() {
   }
 }
 
+function buildAssistantSystemPrompt(context) {
+  const activeTabText = context?.activeTab
+    ? `Current active tab: ${context.activeTab.title || '(no title)'} | ${context.activeTab.url || '(no url)'}`
+    : 'Current active tab: unavailable';
+  const profileText = context?.accessProfile || 'controlled';
+  const connectedText = context?.bridgeConnected ? 'connected' : 'not connected';
+  return [
+    'You are Codex, a browser agent running inside a real Chrome/Edge session through Chrome Bridge.',
+    'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, and explaining what to do next.',
+    'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
+    'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
+    `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
+    activeTabText,
+  ].join('\n');
+}
+
 function inferAssistantModel(endpoint) {
   const value = String(endpoint || '').toLowerCase();
   if (value.includes('openrouter.ai')) return 'openrouter/auto';
   return 'gpt-4o-mini';
 }
 
-async function callAssistantApi({ endpoint, apiKey, model, task }) {
+async function callAssistantApi({ endpoint, apiKey, model, task, context }) {
   const selectedModel = String(model || '').trim() || inferAssistantModel(endpoint);
   const body = {
     model: selectedModel,
     messages: [
       {
         role: 'system',
-        content: 'You are Codex, a browser assistant. Help with the user task briefly and practically.',
-      },
-      {
-        role: 'user',
-        content: task,
-      },
-    ],
-  };
-  const headers = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${apiKey}`,
-  };
-  const endpointText = String(endpoint || '').toLowerCase();
-  if (endpointText.includes('openrouter.ai')) {
-    headers['HTTP-Referer'] = 'https://github.com/KAFTNTU/codex-chrome-platform';
-    headers['X-Title'] = 'Bridge Companion';
-  }
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-  });
-  const rawText = await response.text();
-  let data = null;
-  try {
-    data = rawText ? JSON.parse(rawText) : null;
-  } catch {
-    data = null;
-  }
-  if (!response.ok) {
-    const message = data?.error?.message || data?.message || rawText || `HTTP ${response.status}`;
-    throw new Error(message);
-  }
-  const reply = data?.choices?.[0]?.message?.content
-    ?? data?.choices?.[0]?.text
-    ?? data?.output_text
-    ?? data?.output?.text
-    ?? rawText
-    ?? '';
-  return { reply: String(reply).trim(), model: selectedModel, raw: data };
-}
-
-async function callAssistantApi({ endpoint, apiKey, model, task }) {
-  const selectedModel = String(model || '').trim() || inferAssistantModel(endpoint);
-  const body = {
-    model: selectedModel,
-    messages: [
-      {
-        role: 'system',
-        content: 'You are Codex, a browser assistant. Help with the user task briefly and practically.',
+        content: buildAssistantSystemPrompt(context),
       },
       {
         role: 'user',
@@ -5482,9 +5449,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           const endpoint = String(message.assistantApiEndpoint || state.assistantApiEndpoint || '').trim();
           const apiKey = String(message.assistantApiKey || state.assistantApiKey || '').trim();
           const model = String(message.assistantModel || state.assistantModel || '').trim();
+          const activeTabState = await safeActiveTab();
           if (!endpoint) throw new Error('Missing API endpoint');
           if (!apiKey) throw new Error('Missing API key');
-          const completion = await callAssistantApi({ endpoint, apiKey, model, task: assistantTask });
+          const completion = await callAssistantApi({
+            endpoint,
+            apiKey,
+            model,
+            task: assistantTask,
+            context: {
+              activeTab: activeTabState,
+              accessProfile: state.accessProfile,
+              bridgeConnected: state.connected,
+            },
+          });
           const assistantText = completion.reply || 'No response text returned.';
           pushAssistantChat({ role: 'assistant', text: assistantText });
           state.assistantModel = completion.model || state.assistantModel;
