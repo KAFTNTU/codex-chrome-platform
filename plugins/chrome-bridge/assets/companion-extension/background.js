@@ -179,6 +179,7 @@ function buildAssistantSystemPrompt(context) {
     'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, clicking visible controls, focusing fields, hovering, and explaining what to do next.',
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
+    'When browser actions are needed, return a JSON object with assistant_text and actions. The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, and waitForPageReady. If no action is needed, actions can be an empty array.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
@@ -244,6 +245,94 @@ async function callAssistantApi({ endpoint, apiKey, model, task, context }) {
     ?? rawText
     ?? '';
   return { reply: String(reply).trim(), model: selectedModel, raw: data };
+}
+
+function stripAssistantJsonFence(text) {
+  const value = String(text || '').trim();
+  const fenced = value.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced?.[1]) return fenced[1].trim();
+  return value;
+}
+
+function parseAssistantPlan(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const candidates = [raw];
+  const fenced = stripAssistantJsonFence(raw);
+  if (fenced && fenced !== raw) candidates.push(fenced);
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.push(raw.slice(firstBrace, lastBrace + 1));
+  }
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === 'object') {
+        return parsed;
+      }
+    } catch {
+      // ignore malformed candidates
+    }
+  }
+  return null;
+}
+
+function normalizeAssistantPlan(plan) {
+  if (!plan || typeof plan !== 'object') return null;
+  const assistantText = String(plan.assistant_text || plan.reply || plan.text || '').trim();
+  const actionsSource = Array.isArray(plan.actions)
+    ? plan.actions
+    : Array.isArray(plan.queue)
+      ? plan.queue
+      : [];
+  const actions = actionsSource.map((step) => {
+    if (!step || typeof step !== 'object') return null;
+    const action = String(step.action || step.name || step.command || '').trim();
+    if (!action) return null;
+    const params = step.params && typeof step.params === 'object' ? step.params : {};
+    return { action, params };
+  }).filter(Boolean);
+  return {
+    assistantText,
+    actions,
+  };
+}
+
+function summarizeAssistantActions(results = []) {
+  if (!Array.isArray(results) || !results.length) return 'No browser actions executed.';
+  return results.map((entry, index) => {
+    const action = entry?.action || 'action';
+    const ok = entry?.result?.ok !== false;
+    const stateText = ok ? 'ok' : 'error';
+    const detail = entry?.result?.error || entry?.result?.message || entry?.result?.status || '';
+    return `${index + 1}. ${action}: ${stateText}${detail ? ` (${detail})` : ''}`;
+  }).join('\n');
+}
+
+async function runAssistantActionPlan(actions = [], tabId = null) {
+  const results = [];
+  for (const step of actions.slice(0, 12)) {
+    try {
+      const result = await handleCommand({
+        action: step.action,
+        params: {
+          ...(step.params || {}),
+          ...(tabId != null && step.params?.tabId == null ? { tabId } : {}),
+        },
+      });
+      results.push({ action: step.action, result });
+    } catch (error) {
+      results.push({
+        action: step.action,
+        result: {
+          ok: false,
+          error: error?.message || String(error),
+        },
+      });
+    }
+  }
+  return results;
 }
 
 async function collectAssistantPageContext() {
@@ -5592,8 +5681,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               pageDigest: browserContext.pageDigest,
             },
           });
-          const assistantText = completion.reply || 'No response text returned.';
+          const parsedPlan = normalizeAssistantPlan(parseAssistantPlan(completion.reply));
+          const assistantText = parsedPlan?.assistantText || completion.reply || 'No response text returned.';
           pushAssistantChat({ role: 'assistant', text: assistantText });
+          let assistantActionResults = [];
+          if (parsedPlan?.actions?.length) {
+            assistantActionResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null);
+            pushAssistantChat({
+              role: 'assistant',
+              text: summarizeAssistantActions(assistantActionResults),
+            });
+          }
           state.assistantModel = completion.model || state.assistantModel;
           state.assistantTask = '';
           await chrome.storage.local.set({
@@ -5606,6 +5704,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             ok: true,
             assistantTask: state.assistantTask,
             assistantReply: assistantText,
+            assistantActionResults,
             assistantChatLog,
             assistantModel: state.assistantModel,
           });
