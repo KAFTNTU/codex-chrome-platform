@@ -326,6 +326,27 @@ function buildPageIntentMapFromElements(elements = []) {
   });
 }
 
+function buildPageInteractMap(elements = []) {
+  return elements.slice(0, 200).map((item, index) => {
+    const intent = inferIntentFromElementText(item.text || '', item);
+    const bbox = item.rect || item.boundingBox || item.box || null;
+    return {
+      index: index + 1,
+      intent,
+      confidence: intent === 'unknown' ? 0.35 : 0.94,
+      tag: item.tag || item.kind || null,
+      kind: item.kind || null,
+      text: normalizePreview(item.text || '', 180),
+      selector: item.selector || item.cssSelector || null,
+      href: item.href || null,
+      role: item.role || null,
+      name: item.name || null,
+      type: item.type || null,
+      bbox,
+    };
+  });
+}
+
 async function captureBridgeScreenshot(params = {}) {
   const selector = String(params.selector || '').trim();
   const tabId = params.tabId ?? null;
@@ -836,6 +857,10 @@ async function executeLocalApiAction(action, params = {}) {
     get_site_memory: 'getSiteMemory',
     clear_site_memory: 'clearSiteMemory',
     page_intent_map: 'pageIntentMap',
+    page_interact_map: 'pageInteractMap',
+    page_interact_click: 'pageInteractClick',
+    open_first_visible_result: 'pageInteractClick',
+    click_visible_result: 'pageInteractClick',
   }[action] || action;
   action = aliasAction;
   if (!params.fileQuery && params.fileName) {
@@ -971,6 +996,71 @@ async function executeLocalApiAction(action, params = {}) {
       ok: true,
       site: active.url,
       intents,
+      memory,
+    };
+  }
+
+  if (action === 'pageInteractMap') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    const controlsPayload = await executeRemoteAction('getElements', { kind: params.kind || 'all', maxItems: params.maxItems || 200, tabId: params.tabId });
+    const controls = Array.isArray(controlsPayload?.elements) ? controlsPayload.elements : Array.isArray(controlsPayload?.items) ? controlsPayload.items : [];
+    const interactMap = buildPageInteractMap(controls);
+    const memory = rememberSiteMemory(active.url, {
+      title: active.title || '',
+      interactMap,
+      kind: 'page-interact-map',
+    });
+    return {
+      ok: true,
+      site: active.url,
+      interactMap,
+      memory,
+    };
+  }
+
+  if (action === 'pageInteractClick') {
+    const active = latestClient()?.lastTab || null;
+    if (!active?.url) return errorPayload('EXTENSION_NOT_CONNECTED', 'No active tab found.');
+    const controlsPayload = await executeRemoteAction('getElements', { kind: params.kind || 'all', maxItems: params.maxItems || 200, tabId: params.tabId });
+    const controls = Array.isArray(controlsPayload?.elements) ? controlsPayload.elements : Array.isArray(controlsPayload?.items) ? controlsPayload.items : [];
+    const interactMap = buildPageInteractMap(controls);
+    let selected = null;
+    if (Number.isFinite(Number(params.index))) {
+      selected = interactMap.find((item) => item.index === Number(params.index)) || null;
+    }
+    if (!selected && params.intent) {
+      const intentNeedle = String(params.intent || '').toLowerCase();
+      selected = interactMap.find((item) => item.intent === intentNeedle || item.text.toLowerCase().includes(intentNeedle)) || null;
+    }
+    if (!selected && params.needle) {
+      const needle = String(params.needle || '').toLowerCase();
+      selected = interactMap.find((item) => item.text.toLowerCase().includes(needle)) || null;
+    }
+    if (!selected) {
+      return errorPayload('NO_MATCHES', 'No interactable item matched the request.');
+    }
+    const clicked = await executeRemoteAction('clickNearestMatch', {
+      text: selected.text,
+      selector: selected.selector || undefined,
+      tabId: params.tabId,
+    });
+    const memory = rememberSiteMemory(active.url, {
+      title: active.title || '',
+      lastInteractClick: {
+        at: now(),
+        index: selected.index,
+        intent: selected.intent,
+        text: selected.text,
+        selector: selected.selector,
+      },
+      kind: 'page-interact-click',
+    });
+    return {
+      ok: true,
+      site: active.url,
+      clicked,
+      selected,
       memory,
     };
   }

@@ -49,6 +49,8 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `pageDiffMemory` when you want to compare what changed after an action.
 - Use `resolveDomRoute` when you need the ancestry, frame path, or shadow route for an element.
 - Use `pageIntentMap` when you want a quick semantic map of visible controls.
+- Use `pageInteractMap` when you want a numbered interaction view of the current page.
+- Use `pageInteractClick` when you want to click a visible control by index, intent, or needle.
 - Use `ocrFromScreenshot` when text is baked into images, canvas, or non-DOM UI.
 - Use `visualPageCompare` when you want to see whether the page visually changed between screenshots.
 - Use `screenshot` or `elementScreenshot` when layout matters.

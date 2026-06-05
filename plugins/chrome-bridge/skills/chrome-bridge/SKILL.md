@@ -55,6 +55,8 @@ That file explains:
 - `chrome_bridge_page_diff_memory`: compare the page to the previous short-term snapshot
 - `chrome_bridge_resolve_dom_route`: get the frame/shadow/ancestry route for an element
 - `chrome_bridge_page_intent_map`: map visible controls to likely intents
+- `chrome_bridge_page_interact_map`: build a numbered interaction map of visible controls
+- `chrome_bridge_page_interact_click`: click a control by index, intent, or needle
 - `chrome_bridge_ocr_from_screenshot`: OCR text from screenshots or element captures
 - `chrome_bridge_visual_page_compare`: compare a screenshot against the previous baseline
 - `chrome_bridge_site_memory_snapshot`: save a page summary into site memory

@@ -16,6 +16,7 @@ I’m designed for real browser tasks, not just demos:
 - Read a compact DOM outline or inspect a single element in detail.
 - Summarize a page, split it into sections, detect modals, compare screenshots, and remember the last state for a site.
 - Find a control by text, label, placeholder, name, id, or role across the current page.
+- Build a numbered interaction map of visible controls and click by index or intent.
 - Find the next visible control, match repeated UI blocks, resolve a DOM route, and click by intent.
 - Run OCR on screenshots when text is baked into images or canvas elements.
 - Watch downloads, keep a short memory of page/session changes, and build a site memory by host.
@@ -97,6 +98,8 @@ Common examples:
 - `chrome_bridge_page_diff_memory`
 - `chrome_bridge_resolve_dom_route`
 - `chrome_bridge_page_intent_map`
+- `chrome_bridge_page_interact_map`
+- `chrome_bridge_page_interact_click`
 - `chrome_bridge_ocr_from_screenshot`
 - `chrome_bridge_visual_page_compare`
 - `chrome_bridge_site_memory_snapshot`

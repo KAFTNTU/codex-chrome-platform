@@ -81,6 +81,8 @@ TOOLS = [
     {"name":"chrome_bridge_page_diff_memory","description":"Store a short-term page snapshot and return diffs from the previous snapshot for the tab.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_resolve_dom_route","description":"Resolve the DOM route and geometry for a selector or visible text needle.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_intent_map","description":"Map visible controls into likely intents such as submit, next, search, close, upload, or download.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_page_interact_map","description":"Build a numbered interaction map of visible controls so the agent can work by index or intent.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_page_interact_click","description":"Click a visible control from the interaction map by index, intent, or needle.","inputSchema":{"type":"object","properties":{"index":{"type":"integer"},"intent":{"type":"string"},"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_smart_focus","description":"Focus the most likely input or button on the page.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["input","button"]},"text":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_watch_downloads","description":"Watch recent browser downloads and return a compact snapshot of matching items.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"waitForComplete":{"type":"boolean"},"timeoutMs":{"type":"integer"},"pollMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_wait_for_download","description":"Wait until a matching browser download appears or completes.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"waitForComplete":{"type":"boolean"},"timeoutMs":{"type":"integer"},"pollMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
@@ -437,6 +439,18 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
         return as_text_content(call_bridge("pageIntentMap",payload))
+    if name=="chrome_bridge_page_interact_map":
+        payload={}
+        for field in ("kind","maxItems","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("maxItems","tabId") else arguments[field]
+        return as_text_content(call_bridge("pageInteractMap",payload))
+    if name=="chrome_bridge_page_interact_click":
+        payload={}
+        for field in ("index","intent","needle","kind","maxItems","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("index","maxItems","tabId") else arguments[field]
+        return as_text_content(call_bridge("pageInteractClick",payload))
     if name=="chrome_bridge_smart_focus":
         payload={}
         if "mode" in arguments: payload["mode"]=arguments["mode"]
@@ -632,7 +646,7 @@ def main()->None:
         method=message.get("method"); msg_id=message.get("id")
         try:
             if method=="initialize":
-              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.12"}})
+              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.13"}})
             elif method=="notifications/initialized":
                 continue
             elif method=="tools/list":
