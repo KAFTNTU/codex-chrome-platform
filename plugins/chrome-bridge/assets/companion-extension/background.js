@@ -179,9 +179,10 @@ function buildAssistantSystemPrompt(context) {
     'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, clicking visible controls, focusing fields, hovering, and explaining what to do next.',
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
-    'When browser actions are needed, return ONLY valid JSON with this shape: {"assistant_text":"...","actions":[{"action":"...","params":{}}]}. Do not add markdown, code fences, or extra prose around the JSON.',
+    'When browser actions are needed, return ONLY valid JSON with this shape: {"assistant_text":"...","actions":[{"action":"...","params":{}}],"done":false}. Do not add markdown, code fences, or extra prose around the JSON.',
     'The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, waitForPageReady, and scroll or smoothScroll.',
     'For scrolling, use smoothScroll: negative totalY scrolls up, positive totalY scrolls down. Example: {"assistant_text":"Scrolling up a bit.","actions":[{"action":"smoothScroll","params":{"totalY":-800,"stepY":120,"delayMs":25}}]}',
+    'For complex work, proceed in stages. After each assistant_text + actions response, wait for the execution results, then continue with the next step until done=true. If more work remains, keep done=false.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
@@ -200,21 +201,23 @@ function inferAssistantModel(endpoint) {
   return 'gpt-4o-mini';
 }
 
-async function callAssistantApi({ endpoint, apiKey, model, task, context }) {
+async function callAssistantApi({ endpoint, apiKey, model, task, context, messages = null }) {
   const selectedModel = String(model || '').trim() || inferAssistantModel(endpoint);
   const endpointText = String(endpoint || '').toLowerCase();
   const body = {
     model: selectedModel,
-    messages: [
-      {
-        role: 'system',
-        content: buildAssistantSystemPrompt(context),
-      },
-      {
-        role: 'user',
-        content: task,
-      },
-    ],
+    messages: Array.isArray(messages) && messages.length
+      ? messages
+      : [
+          {
+            role: 'system',
+            content: buildAssistantSystemPrompt(context),
+          },
+          {
+            role: 'user',
+            content: task,
+          },
+        ],
   };
   if (endpointText.includes('openrouter.ai') || endpointText.includes('openai.com')) {
     body.response_format = { type: 'json_object' };
@@ -298,10 +301,27 @@ function normalizeAssistantPlan(plan) {
     const params = step.params && typeof step.params === 'object' ? step.params : {};
     return { action, params };
   }).filter(Boolean);
+  const done = plan.done === true || plan.complete === true || plan.finished === true
+    ? true
+    : plan.done === false || plan.continue === true
+      ? false
+      : null;
   return {
     assistantText,
     actions,
+    done,
   };
+}
+
+function buildAssistantStepPrompt(task, stepIndex, previousSummary, lastActionSummary) {
+  return [
+    `Original task: ${task}`,
+    `Step: ${stepIndex}`,
+    previousSummary ? `Previous summary: ${previousSummary}` : '',
+    lastActionSummary ? `Last execution results:\n${lastActionSummary}` : '',
+    'Continue from the current browser state and return only JSON with assistant_text, actions, and done.',
+    'If the task is finished, set done=true and return no further actions.',
+  ].filter(Boolean).join('\n\n');
 }
 
 function normalizeCommandAction(action) {
@@ -5720,33 +5740,92 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           if (!endpoint) throw new Error('Missing API endpoint');
           if (!apiKey) throw new Error('Missing API key');
           const browserContext = await collectAssistantPageContext();
-          const completion = await callAssistantApi({
-            endpoint,
-            apiKey,
-            model,
-            task: assistantTask,
-            context: {
-              activeTab: browserContext.activeTab,
-              accessProfile: state.accessProfile,
-              bridgeConnected: state.connected,
-              pageSummary: browserContext.pageSummary,
-              pageOutline: browserContext.pageOutline,
-              pageSnapshot: browserContext.pageSnapshot,
-              pageDigest: browserContext.pageDigest,
+          const assistantContext = {
+            activeTab: browserContext.activeTab,
+            accessProfile: state.accessProfile,
+            bridgeConnected: state.connected,
+            pageSummary: browserContext.pageSummary,
+            pageOutline: browserContext.pageOutline,
+            pageSnapshot: browserContext.pageSnapshot,
+            pageInteract: browserContext.pageInteract,
+            pageDigest: browserContext.pageDigest,
+          };
+          const conversation = [
+            {
+              role: 'system',
+              content: buildAssistantSystemPrompt(assistantContext),
             },
-          });
-          const parsedPlan = normalizeAssistantPlan(parseAssistantPlan(completion.reply));
-          const assistantText = parsedPlan?.assistantText || completion.reply || 'No response text returned.';
-          pushAssistantChat({ role: 'assistant', text: assistantText });
-          let assistantActionResults = [];
-          if (parsedPlan?.actions?.length) {
-            assistantActionResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null);
-            pushAssistantChat({
-              role: 'assistant',
-              text: summarizeAssistantActions(assistantActionResults),
+            {
+              role: 'user',
+              content: assistantTask,
+            },
+          ];
+          const assistantActionResults = [];
+          const assistantReplies = [];
+          const maxSteps = 5;
+          let lastExecutionSummary = '';
+          let finished = false;
+          let lastModel = model;
+          for (let stepIndex = 1; stepIndex <= maxSteps; stepIndex += 1) {
+            const completion = await callAssistantApi({
+              endpoint,
+              apiKey,
+              model,
+              task: assistantTask,
+              context: assistantContext,
+              messages: conversation,
             });
+            lastModel = completion.model || lastModel;
+            const parsedPlan = normalizeAssistantPlan(parseAssistantPlan(completion.reply));
+            const assistantText = parsedPlan?.assistantText || completion.reply || 'No response text returned.';
+            assistantReplies.push(assistantText);
+            pushAssistantChat({ role: 'assistant', text: `Step ${stepIndex}: ${assistantText}` });
+            conversation.push({
+              role: 'assistant',
+              content: completion.reply,
+            });
+            if (parsedPlan?.actions?.length) {
+              const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null);
+              assistantActionResults.push(...stepResults);
+              lastExecutionSummary = summarizeAssistantActions(stepResults);
+              pushAssistantChat({
+                role: 'assistant',
+                text: `Step ${stepIndex} results:\n${lastExecutionSummary}`,
+              });
+              if (parsedPlan.done === true) {
+                finished = true;
+                break;
+              }
+              conversation.push({
+                role: 'user',
+                content: buildAssistantStepPrompt(
+                  assistantTask,
+                  stepIndex + 1,
+                  assistantReplies.join('\n\n').slice(0, 4000),
+                  lastExecutionSummary,
+                ),
+              });
+              continue;
+            }
+            if (parsedPlan?.done === true || parsedPlan == null || !parsedPlan?.assistantText) {
+              finished = true;
+              break;
+            }
+            if (stepIndex < maxSteps) {
+              conversation.push({
+                role: 'user',
+                content: buildAssistantStepPrompt(
+                  assistantTask,
+                  stepIndex + 1,
+                  assistantReplies.join('\n\n').slice(0, 4000),
+                  lastExecutionSummary,
+                ),
+              });
+              continue;
+            }
           }
-          state.assistantModel = completion.model || state.assistantModel;
+          const assistantText = assistantReplies[assistantReplies.length - 1] || 'No response text returned.';
+          state.assistantModel = lastModel || state.assistantModel;
           state.assistantTask = '';
           await chrome.storage.local.set({
             assistantTask: state.assistantTask,
@@ -5761,6 +5840,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             assistantActionResults,
             assistantChatLog,
             assistantModel: state.assistantModel,
+            assistantFinished: finished,
           });
           return;
         } catch (error) {
