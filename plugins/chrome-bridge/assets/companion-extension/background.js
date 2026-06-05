@@ -16,6 +16,7 @@ let state = {
   serverUrl: DEFAULT_SERVER,
   bridgeToken: '',
   assistantApiEndpoint: '',
+  assistantModel: '',
   assistantApiKey: '',
   assistantTask: '',
   assistantRememberApiKey: false,
@@ -67,6 +68,7 @@ async function loadState() {
     'serverUrl',
     'bridgeToken',
     'assistantApiEndpoint',
+    'assistantModel',
     'assistantApiKey',
     'assistantTask',
     'assistantRememberApiKey',
@@ -83,6 +85,7 @@ async function loadState() {
   state.serverUrl = stored.serverUrl || DEFAULT_SERVER;
   state.bridgeToken = stored.bridgeToken || '';
   state.assistantApiEndpoint = stored.assistantApiEndpoint || '';
+  state.assistantModel = stored.assistantModel || '';
   state.assistantApiKey = stored.assistantApiKey || '';
   state.assistantTask = stored.assistantTask || '';
   state.assistantRememberApiKey = stored.assistantRememberApiKey === true;
@@ -99,6 +102,7 @@ async function loadState() {
     serverUrl: state.serverUrl,
     bridgeToken: state.bridgeToken,
     assistantApiEndpoint: state.assistantApiEndpoint,
+    assistantModel: state.assistantModel,
     assistantTask: state.assistantTask,
     assistantRememberApiKey: state.assistantRememberApiKey,
     assistantChatLog,
@@ -145,6 +149,110 @@ async function persistWorkspaceState() {
   } catch {
     // Ignore transient storage failures.
   }
+}
+
+function inferAssistantModel(endpoint) {
+  const value = String(endpoint || '').toLowerCase();
+  if (value.includes('openrouter.ai')) return 'openrouter/auto';
+  return 'gpt-4o-mini';
+}
+
+async function callAssistantApi({ endpoint, apiKey, model, task }) {
+  const selectedModel = String(model || '').trim() || inferAssistantModel(endpoint);
+  const body = {
+    model: selectedModel,
+    messages: [
+      {
+        role: 'system',
+        content: 'You are Codex, a browser assistant. Help with the user task briefly and practically.',
+      },
+      {
+        role: 'user',
+        content: task,
+      },
+    ],
+  };
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+  };
+  const endpointText = String(endpoint || '').toLowerCase();
+  if (endpointText.includes('openrouter.ai')) {
+    headers['HTTP-Referer'] = 'https://github.com/KAFTNTU/codex-chrome-platform';
+    headers['X-Title'] = 'Bridge Companion';
+  }
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  const rawText = await response.text();
+  let data = null;
+  try {
+    data = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    data = null;
+  }
+  if (!response.ok) {
+    const message = data?.error?.message || data?.message || rawText || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  const reply = data?.choices?.[0]?.message?.content
+    ?? data?.choices?.[0]?.text
+    ?? data?.output_text
+    ?? data?.output?.text
+    ?? rawText
+    ?? '';
+  return { reply: String(reply).trim(), model: selectedModel, raw: data };
+}
+
+async function callAssistantApi({ endpoint, apiKey, model, task }) {
+  const selectedModel = String(model || '').trim() || inferAssistantModel(endpoint);
+  const body = {
+    model: selectedModel,
+    messages: [
+      {
+        role: 'system',
+        content: 'You are Codex, a browser assistant. Help with the user task briefly and practically.',
+      },
+      {
+        role: 'user',
+        content: task,
+      },
+    ],
+  };
+  const headers = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+  };
+  const endpointText = String(endpoint || '').toLowerCase();
+  if (endpointText.includes('openrouter.ai')) {
+    headers['HTTP-Referer'] = 'https://github.com/KAFTNTU/codex-chrome-platform';
+    headers['X-Title'] = 'Bridge Companion';
+  }
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+  });
+  const rawText = await response.text();
+  let data = null;
+  try {
+    data = rawText ? JSON.parse(rawText) : null;
+  } catch {
+    data = null;
+  }
+  if (!response.ok) {
+    const message = data?.error?.message || data?.message || rawText || `HTTP ${response.status}`;
+    throw new Error(message);
+  }
+  const reply = data?.choices?.[0]?.message?.content
+    ?? data?.choices?.[0]?.text
+    ?? data?.output_text
+    ?? data?.output?.text
+    ?? rawText
+    ?? '';
+  return { reply: String(reply).trim(), model: selectedModel, raw: data };
 }
 
 function scheduleNativeBridgeReconnect() {
@@ -5298,6 +5406,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         serverUrl: state.serverUrl,
         bridgeToken: state.bridgeToken,
         assistantApiEndpoint: state.assistantApiEndpoint,
+        assistantModel: state.assistantModel,
         assistantApiKey: state.assistantApiKey,
         assistantTask: state.assistantTask,
         assistantRememberApiKey: state.assistantRememberApiKey,
@@ -5334,14 +5443,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
     if (message?.type === 'popup-save-assistant-settings') {
       state.assistantApiEndpoint = String(message.assistantApiEndpoint || '').trim();
+      state.assistantModel = String(message.assistantModel || '').trim();
       state.assistantApiKey = String(message.assistantApiKey || '').trim();
       state.assistantTask = String(message.assistantTask || '').trim();
       state.assistantRememberApiKey = message.assistantRememberApiKey === true;
-      if (!state.assistantRememberApiKey) {
-        state.assistantApiKey = state.assistantApiKey; // keep in memory for current session only
-      }
       await chrome.storage.local.set({
         assistantApiEndpoint: state.assistantApiEndpoint,
+        assistantModel: state.assistantModel,
         assistantTask: state.assistantTask,
         assistantRememberApiKey: state.assistantRememberApiKey,
         assistantChatLog,
@@ -5354,6 +5462,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sendResponse({
         ok: true,
         assistantApiEndpoint: state.assistantApiEndpoint,
+        assistantModel: state.assistantModel,
         assistantApiKey: state.assistantApiKey,
         assistantTask: state.assistantTask,
         assistantRememberApiKey: state.assistantRememberApiKey,
@@ -5365,19 +5474,47 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (assistantTask) {
         state.assistantTask = assistantTask;
         pushAssistantChat({ role: 'user', text: assistantTask });
-        pushAssistantChat({ role: 'assistant', text: 'Task received by the bridge and queued for execution.' });
-        await chrome.storage.local.set({ assistantTask: state.assistantTask, assistantChatLog });
         pushCommandLog({
           action: 'assistantTask',
           paramsPreview: assistantTask.length > 180 ? `${assistantTask.slice(0, 177)}...` : assistantTask,
         });
+        try {
+          const endpoint = String(message.assistantApiEndpoint || state.assistantApiEndpoint || '').trim();
+          const apiKey = String(message.assistantApiKey || state.assistantApiKey || '').trim();
+          const model = String(message.assistantModel || state.assistantModel || '').trim();
+          if (!endpoint) throw new Error('Missing API endpoint');
+          if (!apiKey) throw new Error('Missing API key');
+          const completion = await callAssistantApi({ endpoint, apiKey, model, task: assistantTask });
+          const assistantText = completion.reply || 'No response text returned.';
+          pushAssistantChat({ role: 'assistant', text: assistantText });
+          state.assistantModel = completion.model || state.assistantModel;
+          await chrome.storage.local.set({
+            assistantTask: state.assistantTask,
+            assistantChatLog,
+            assistantApiEndpoint: endpoint,
+            assistantModel: state.assistantModel,
+          });
+          sendResponse({
+            ok: true,
+            assistantTask: state.assistantTask,
+            assistantReply: assistantText,
+            assistantChatLog,
+            assistantModel: state.assistantModel,
+          });
+          return;
+        } catch (error) {
+          const messageText = error.message || String(error);
+          pushAssistantChat({ role: 'assistant', text: `Error: ${messageText}` });
+          await chrome.storage.local.set({ assistantTask: state.assistantTask, assistantChatLog });
+          sendResponse({
+            ok: false,
+            error: messageText,
+            assistantChatLog,
+          });
+          return;
+        }
       }
-      sendResponse({
-        ok: true,
-        assistantTask: state.assistantTask,
-        assistantReply: assistantTask ? 'Task received by the bridge and queued for execution.' : '',
-        assistantChatLog,
-      });
+      sendResponse({ ok: true, assistantTask: state.assistantTask, assistantChatLog });
       return;
     }
     if (message?.type === 'popup-clear-assistant-chat') {

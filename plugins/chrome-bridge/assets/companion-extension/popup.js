@@ -194,6 +194,7 @@ async function refresh() {
     syncFieldValue('serverUrl', state.serverUrl || 'http://127.0.0.1:17373');
     renderAccessProfile(state.accessProfile || 'controlled');
     syncFieldValue('assistantApiEndpoint', state.assistantApiEndpoint || '');
+    syncFieldValue('assistantModel', state.assistantModel || '');
     syncFieldValue('assistantApiKey', state.assistantApiKey || '');
     syncFieldValue('assistantTask', state.assistantTask || '');
     el('rememberApiKey').checked = !!state.assistantRememberApiKey;
@@ -234,6 +235,7 @@ async function saveAssistantSettings() {
     await chrome.runtime.sendMessage({
       type: 'popup-save-assistant-settings',
       assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
+      assistantModel: el('assistantModel').value.trim(),
       assistantApiKey: el('assistantApiKey').value.trim(),
       assistantTask: el('assistantTask').value.trim(),
       assistantRememberApiKey: !!el('rememberApiKey').checked,
@@ -250,6 +252,9 @@ async function runAssistantTask() {
     const response = await chrome.runtime.sendMessage({
       type: 'popup-run-assistant-task',
       assistantTask: el('assistantTask').value.trim(),
+      assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
+      assistantModel: el('assistantModel').value.trim(),
+      assistantApiKey: el('assistantApiKey').value.trim(),
     });
     if (response?.assistantChatLog) {
       renderAssistantChat(response.assistantChatLog);
@@ -270,6 +275,7 @@ async function clearAssistantTask() {
     await chrome.runtime.sendMessage({
       type: 'popup-save-assistant-settings',
       assistantApiEndpoint: el('assistantApiEndpoint').value.trim(),
+      assistantModel: el('assistantModel').value.trim(),
       assistantApiKey: el('assistantApiKey').value.trim(),
       assistantTask: '',
       assistantRememberApiKey: !!el('rememberApiKey').checked,
@@ -370,7 +376,7 @@ el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);
 
-for (const id of ['serverUrl', 'assistantApiEndpoint', 'assistantApiKey', 'assistantTask', 'rememberApiKey']) {
+for (const id of ['serverUrl', 'assistantApiEndpoint', 'assistantModel', 'assistantApiKey', 'assistantTask', 'rememberApiKey']) {
   el(id).addEventListener('input', () => queueSaveAssistantSettings());
   el(id).addEventListener('change', () => queueSaveAssistantSettings(0));
 }
