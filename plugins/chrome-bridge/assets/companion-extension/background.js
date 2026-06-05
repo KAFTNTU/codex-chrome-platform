@@ -157,13 +157,22 @@ function buildAssistantSystemPrompt(context) {
     : 'Current active tab: unavailable';
   const profileText = context?.accessProfile || 'controlled';
   const connectedText = context?.bridgeConnected ? 'connected' : 'not connected';
+  const pageSummaryText = context?.pageSummary?.summaryText
+    || context?.pageSummary?.summary?.join?.(' | ')
+    || 'Page summary: unavailable';
+  const pageOutlineText = context?.pageOutline?.summaryText
+    || context?.pageOutline?.summary?.join?.(' | ')
+    || 'DOM outline: unavailable';
   return [
     'You are Codex, a browser agent running inside a real Chrome/Edge session through Chrome Bridge.',
     'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, and explaining what to do next.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
+    'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
+    `Page summary: ${pageSummaryText}`,
+    `DOM outline: ${pageOutlineText}`,
   ].join('\n');
 }
 
@@ -220,6 +229,46 @@ async function callAssistantApi({ endpoint, apiKey, model, task, context }) {
     ?? rawText
     ?? '';
   return { reply: String(reply).trim(), model: selectedModel, raw: data };
+}
+
+async function collectAssistantPageContext() {
+  const active = await safeActiveTab();
+  let pageSummary = null;
+  let pageOutline = null;
+  let pageSnapshot = null;
+  try {
+    const response = await post('/api/action', {
+      action: 'pageSummary',
+      params: { tabId: active?.id ?? null, maxItems: 10 },
+    });
+    pageSummary = response?.result || response || null;
+  } catch {
+    // Ignore pageSummary failures.
+  }
+  try {
+    const response = await post('/api/action', {
+      action: 'pageDomOutline',
+      params: { tabId: active?.id ?? null, maxItems: 10 },
+    });
+    pageOutline = response?.result || response || null;
+  } catch {
+    // Ignore pageDomOutline failures.
+  }
+  try {
+    const response = await post('/api/action', {
+      action: 'pageDomSnapshot',
+      params: { tabId: active?.id ?? null, maxItems: 8 },
+    });
+    pageSnapshot = response?.result || response || null;
+  } catch {
+    // Ignore pageDomSnapshot failures.
+  }
+  return {
+    activeTab: active,
+    pageSummary,
+    pageOutline,
+    pageSnapshot,
+  };
 }
 
 function scheduleNativeBridgeReconnect() {
@@ -5448,18 +5497,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           const endpoint = String(message.assistantApiEndpoint || state.assistantApiEndpoint || '').trim();
           const apiKey = String(message.assistantApiKey || state.assistantApiKey || '').trim();
           const model = String(message.assistantModel || state.assistantModel || '').trim();
-          const activeTabState = await safeActiveTab();
           if (!endpoint) throw new Error('Missing API endpoint');
           if (!apiKey) throw new Error('Missing API key');
+          const browserContext = await collectAssistantPageContext();
           const completion = await callAssistantApi({
             endpoint,
             apiKey,
             model,
             task: assistantTask,
             context: {
-              activeTab: activeTabState,
+              activeTab: browserContext.activeTab,
               accessProfile: state.accessProfile,
               bridgeConnected: state.connected,
+              pageSummary: browserContext.pageSummary,
+              pageOutline: browserContext.pageOutline,
+              pageSnapshot: browserContext.pageSnapshot,
             },
           });
           const assistantText = completion.reply || 'No response text returned.';
