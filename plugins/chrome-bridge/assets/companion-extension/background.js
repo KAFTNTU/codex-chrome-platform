@@ -5439,7 +5439,6 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'popup-run-assistant-task') {
       const assistantTask = String(message.assistantTask ?? state.assistantTask ?? '').trim();
       if (assistantTask) {
-        state.assistantTask = assistantTask;
         pushAssistantChat({ role: 'user', text: assistantTask });
         pushCommandLog({
           action: 'assistantTask',
@@ -5466,6 +5465,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           const assistantText = completion.reply || 'No response text returned.';
           pushAssistantChat({ role: 'assistant', text: assistantText });
           state.assistantModel = completion.model || state.assistantModel;
+          state.assistantTask = '';
           await chrome.storage.local.set({
             assistantTask: state.assistantTask,
             assistantChatLog,
@@ -5483,11 +5483,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         } catch (error) {
           const messageText = error.message || String(error);
           pushAssistantChat({ role: 'assistant', text: `Error: ${messageText}` });
+          state.assistantTask = '';
           await chrome.storage.local.set({ assistantTask: state.assistantTask, assistantChatLog });
           sendResponse({
             ok: false,
             error: messageText,
             assistantChatLog,
+            assistantTask: state.assistantTask,
           });
           return;
         }

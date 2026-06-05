@@ -3,6 +3,7 @@ let pollTimer = null;
 let noticeTimer = null;
 let saveTimer = null;
 let currentAccessProfile = 'controlled';
+let connectionDetailsVisible = false;
 
 function el(id) {
   return document.getElementById(id);
@@ -52,16 +53,10 @@ function renderAssistantChat(chatLog) {
   list.scrollTop = list.scrollHeight;
 }
 
-function openSettingsModal() {
-  const modal = el('settingsModal');
-  modal.classList.add('open');
-  modal.setAttribute('aria-hidden', 'false');
-}
-
-function closeSettingsModal() {
-  const modal = el('settingsModal');
-  modal.classList.remove('open');
-  modal.setAttribute('aria-hidden', 'true');
+function renderConnectionDetailsVisibility() {
+  const node = el('connectionDetails');
+  if (!node) return;
+  node.classList.toggle('hidden', !connectionDetailsVisible);
 }
 
 function syncFieldValue(id, value) {
@@ -262,6 +257,7 @@ async function runAssistantTask() {
     if (response?.assistantReply) {
       showNotice(response.assistantReply);
     }
+    el('assistantTask').value = '';
   } catch (error) {
     showNotice(error.message || String(error), true);
     return;
@@ -358,10 +354,9 @@ el('saveAssistant').addEventListener('click', saveAssistantSettings);
 el('runAssistantTask').addEventListener('click', runAssistantTask);
 el('clearAssistantTask').addEventListener('click', clearAssistantTask);
 el('clearAssistantChat').addEventListener('click', clearAssistantChat);
-el('statusPill').addEventListener('click', openSettingsModal);
-el('closeSettingsModal').addEventListener('click', closeSettingsModal);
-el('settingsModal').addEventListener('click', (event) => {
-  if (event.target === el('settingsModal')) closeSettingsModal();
+el('statusPill').addEventListener('click', () => {
+  connectionDetailsVisible = !connectionDetailsVisible;
+  renderConnectionDetailsVisibility();
 });
 el('controlledProfile').addEventListener('click', async () => {
   currentAccessProfile = 'controlled';
@@ -382,7 +377,10 @@ for (const id of ['serverUrl', 'assistantApiEndpoint', 'assistantModel', 'assist
 }
 
 window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') closeSettingsModal();
+  if (event.key === 'Escape') {
+    connectionDetailsVisible = false;
+    renderConnectionDetailsVisibility();
+  }
 });
 
 refresh();

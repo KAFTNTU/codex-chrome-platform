@@ -177,6 +177,9 @@
     .status-button:hover {
       background: #27303b;
     }
+    .hidden {
+      display: none !important;
+    }
     .details {
       border-radius: 9px;
       border: 1px solid var(--line);
@@ -371,6 +374,21 @@
       <div class="row notice" id="notice"></div>
     </div>
 
+    <div id="connectionDetails" class="card hidden">
+      <div class="title">
+        <span>Connection details</span>
+        <span class="sub">Client ID and status</span>
+      </div>
+      <div class="row">
+        <div class="sub">Client ID</div>
+        <code id="clientId"></code>
+      </div>
+      <div class="row">
+        <div class="sub">Error</div>
+        <code id="error"></code>
+      </div>
+    </div>
+
     <div class="card">
       <div class="title">
         <span>Chat history</span>
@@ -417,25 +435,6 @@
         <span id="commandCount" class="pill">0</span>
       </div>
       <div id="commandList" class="list"></div>
-    </div>
-  </div>
-  <div id="settingsModal" class="modal-backdrop" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
-      <div class="modal-head">
-        <div>
-          <div id="settingsModalTitle" class="modal-title">Connection details</div>
-          <div class="sub">Client ID and status</div>
-        </div>
-        <button id="closeSettingsModal" class="modal-close" aria-label="Close">×</button>
-      </div>
-      <div class="row">
-        <div class="sub">Client ID</div>
-        <code id="clientId"></code>
-      </div>
-      <div class="row">
-        <div class="sub">Error</div>
-        <code id="error"></code>
-      </div>
     </div>
   </div>
   <script src="popup.js"></script>
