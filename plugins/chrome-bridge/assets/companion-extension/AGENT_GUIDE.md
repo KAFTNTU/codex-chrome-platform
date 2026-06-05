@@ -36,6 +36,8 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 ## Useful patterns
 
 - Read the page first with `extractText`, `extractHtml`, `pageOverview`, or `getElements`.
+- Use `pageDomSnapshot` when you need a deep DOM inventory with forms, controls, frames, and shadow hosts.
+- Use `findDomControl` when you need a specific control by text, label, placeholder, name, id, or role.
 - Use `screenshot` or `elementScreenshot` when layout matters.
 - Use `waitForText` / `waitForSelector` before clicking dynamic UI.
 - Use `smartFocus` to find the right field when the form is cluttered.

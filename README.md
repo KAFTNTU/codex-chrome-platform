@@ -12,6 +12,8 @@ I’m designed for real browser tasks, not just demos:
 - Navigate, click, type, scroll, wait for content, and work with forms.
 - Capture screenshots of the whole page or a specific element.
 - Read tables, visible text, HTML, console output, and network activity.
+- Take a deep DOM snapshot with forms, controls, frames, and shadow hosts.
+- Find a control by text, label, placeholder, name, id, or role across the current page.
 - Open a fresh browser search tab from a query without you opening a page first.
 - Open a Reddit compose draft in your personal browser and prefill a post title/body.
 - Fill common form fields by label, name, placeholder, id, or aria hints, then click the right button when you ask me to.
@@ -77,6 +79,8 @@ Common examples:
 - `chrome_bridge_universal_file_upload_preflight`
 - `chrome_bridge_universal_file_upload_attach_and_submit`
 - `chrome_bridge_universal_form_assist`
+- `chrome_bridge_page_dom_snapshot`
+- `chrome_bridge_find_dom_control`
 
 ## Quick start
 

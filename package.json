@@ -1,6 +1,6 @@
 {
   "name": "codex-chrome-platform",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "Local browser automation platform with Chrome Bridge, MCP, Local API, native messaging, and cross-platform bridge autostart.",
   "main": "desktop-app/main.js",
   "private": true,

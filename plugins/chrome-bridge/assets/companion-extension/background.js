@@ -3314,6 +3314,461 @@ async function handleCommand(command) {
           landmarks,
         };
       }, [], params.tabId ?? null);
+    case 'pageDomSnapshot':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const lower = (value) => norm(value).toLowerCase();
+        const includeHidden = !!options.includeHidden;
+        const includeFrames = options.includeFrames !== false;
+        const includeShadowDom = options.includeShadowDom !== false;
+        const maxItems = Math.max(1, Number(options.maxItems || 120));
+        const seenRoots = new Set();
+        const roots = [];
+        const pushRoot = (root) => {
+          if (!root || seenRoots.has(root)) return;
+          seenRoots.add(root);
+          roots.push(root);
+        };
+        pushRoot(document);
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const isDeepRoot = (node) => node && (node.nodeType === Node.DOCUMENT_NODE || node instanceof ShadowRoot);
+        const collectRoots = () => {
+          let index = 0;
+          while (index < roots.length) {
+            const root = roots[index];
+            index += 1;
+            const elements = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+            if (includeShadowDom) {
+              for (const el of elements) {
+                if (el.shadowRoot) pushRoot(el.shadowRoot);
+              }
+            }
+            if (includeFrames) {
+              for (const frame of Array.from(root.querySelectorAll('iframe, frame'))) {
+                try {
+                  if (frame.contentDocument && isDeepRoot(frame.contentDocument)) {
+                    pushRoot(frame.contentDocument);
+                  }
+                } catch {
+                  // Cross-origin frames are skipped.
+                }
+              }
+            }
+          }
+        };
+        collectRoots();
+        const queryAllDeep = (selector) => {
+          const results = [];
+          const seen = new Set();
+          for (const root of roots) {
+            if (!root.querySelectorAll) continue;
+            for (const el of Array.from(root.querySelectorAll(selector))) {
+              if (seen.has(el)) continue;
+              seen.add(el);
+              results.push(el);
+            }
+          }
+          return results;
+        };
+        const queryDeep = (selector) => {
+          for (const root of roots) {
+            if (!root.querySelector) continue;
+            const found = root.querySelector(selector);
+            if (found) return found;
+          }
+          return null;
+        };
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const aria = el.getAttribute('aria-label');
+          if (aria) return `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria.slice(0, 40))}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const labelTextFor = (el) => {
+          const parts = [];
+          if (el.id) {
+            for (const label of Array.from(queryAllDeep('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+            const ids = String(el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+            for (const id of ids) {
+              const ref = queryDeep(`#${CSS.escape(id)}`);
+              if (ref) parts.push(ref.innerText || ref.textContent || '');
+            }
+          }
+          const closest = el.closest('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          const parent = el.parentElement?.innerText || '';
+          if (parent) parts.push(parent);
+          return norm(parts.join(' '));
+        };
+        const controlHint = (el) => norm([
+          el.getAttribute('aria-label'),
+          el.getAttribute('placeholder'),
+          el.getAttribute('name'),
+          el.id,
+          el.getAttribute('title'),
+          el.getAttribute('autocomplete'),
+          el.getAttribute('data-testid'),
+          el.getAttribute('data-test'),
+          el.getAttribute('role'),
+          labelTextFor(el),
+        ].filter(Boolean).join(' '));
+        const controlEntries = queryAllDeep('a, button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"], summary')
+          .filter((el) => includeHidden || visible(el))
+          .slice(0, maxItems)
+          .map((el) => {
+            const rect = el.getBoundingClientRect();
+            const tag = el.tagName.toLowerCase();
+            const type = el.getAttribute('type') || null;
+            const text = norm(el.innerText || el.textContent || el.value || '').slice(0, 220);
+            return {
+              tag,
+              type,
+              role: el.getAttribute('role') || null,
+              selector: selectorFor(el),
+              text,
+              label: labelTextFor(el).slice(0, 220),
+              hint: controlHint(el).slice(0, 220),
+              id: el.id || null,
+              name: el.getAttribute('name') || null,
+              href: el.href || null,
+              valuePreview: ('value' in el ? String(el.value || '') : '').slice(0, 120),
+              visible: visible(el),
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          });
+        const formEntries = Array.from(document.forms).slice(0, maxItems).map((form, index) => {
+          const fields = Array.from(form.elements || []).slice(0, 80).map((field) => {
+            const rect = field.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
+            return {
+              tag: field.tagName?.toLowerCase?.() || null,
+              type: field.getAttribute?.('type') || null,
+              name: field.getAttribute?.('name') || null,
+              id: field.id || null,
+              selector: field.id ? `#${CSS.escape(field.id)}` : field.getAttribute?.('name') ? `${field.tagName.toLowerCase()}[name="${CSS.escape(field.getAttribute('name'))}"]` : field.tagName?.toLowerCase?.() || null,
+              label: labelTextFor(field).slice(0, 220),
+              hint: controlHint(field).slice(0, 220),
+              placeholder: field.getAttribute?.('placeholder') || null,
+              valuePreview: String('value' in field ? field.value || '' : '').slice(0, 120),
+              required: !!field.required,
+              disabled: !!field.disabled,
+              visible: visible(field),
+              x: Math.round(rect.left || 0),
+              y: Math.round(rect.top || 0),
+              width: Math.round(rect.width || 0),
+              height: Math.round(rect.height || 0),
+            };
+          });
+          return {
+            index,
+            id: form.id || null,
+            name: form.getAttribute('name') || null,
+            action: form.getAttribute('action') || null,
+            method: form.getAttribute('method') || 'get',
+            selector: form.id ? `#${CSS.escape(form.id)}` : 'form',
+            fieldCount: form.elements?.length || 0,
+            fields,
+          };
+        });
+        const frameEntries = includeFrames ? Array.from(queryAllDeep('iframe, frame')).slice(0, maxItems).map((frame, index) => {
+          const rect = frame.getBoundingClientRect();
+          let sameOrigin = false;
+          let innerTitle = null;
+          let innerUrl = null;
+          let innerControlCount = null;
+          try {
+            const doc = frame.contentDocument;
+            sameOrigin = !!doc;
+            innerTitle = doc?.title || null;
+            innerUrl = doc?.location?.href || null;
+            innerControlCount = doc ? doc.querySelectorAll('a, button, input, select, textarea').length : null;
+          } catch {
+            sameOrigin = false;
+          }
+          return {
+            index,
+            tag: frame.tagName.toLowerCase(),
+            id: frame.id || null,
+            name: frame.getAttribute('name') || null,
+            title: frame.getAttribute('title') || null,
+            src: frame.getAttribute('src') || null,
+            selector: frame.id ? `#${CSS.escape(frame.id)}` : frame.tagName.toLowerCase(),
+            sameOrigin,
+            innerTitle,
+            innerUrl,
+            innerControlCount,
+            visible: visible(frame),
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          };
+        }) : [];
+        const shadowHosts = includeShadowDom ? queryAllDeep('*')
+          .filter((el) => !!el.shadowRoot)
+          .slice(0, maxItems)
+          .map((el) => {
+            const rect = el.getBoundingClientRect();
+            return {
+              tag: el.tagName.toLowerCase(),
+              id: el.id || null,
+              name: el.getAttribute('name') || null,
+              role: el.getAttribute('role') || null,
+              selector: selectorFor(el),
+              childCount: el.shadowRoot?.querySelectorAll('*').length || 0,
+              visible: visible(el),
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          }) : [];
+        const scrollContainers = queryAllDeep('*')
+          .filter((el) => {
+            if (!visible(el)) return false;
+            const style = window.getComputedStyle(el);
+            const overflowY = `${style.overflowY || ''}`.toLowerCase();
+            const overflowX = `${style.overflowX || ''}`.toLowerCase();
+            const rect = el.getBoundingClientRect();
+            return (
+              ['auto', 'scroll', 'overlay'].includes(overflowY) ||
+              ['auto', 'scroll', 'overlay'].includes(overflowX)
+            ) && rect.height > 0 && rect.width > 0;
+          })
+          .slice(0, maxItems)
+          .map((el) => {
+            const rect = el.getBoundingClientRect();
+            return {
+              tag: el.tagName.toLowerCase(),
+              selector: selectorFor(el),
+              text: norm(el.innerText || el.textContent || '').slice(0, 140),
+              scrollHeight: el.scrollHeight,
+              scrollWidth: el.scrollWidth,
+              clientHeight: el.clientHeight,
+              clientWidth: el.clientWidth,
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          });
+        const active = document.activeElement ? {
+          tag: document.activeElement.tagName?.toLowerCase?.() || null,
+          type: document.activeElement.getAttribute?.('type') || null,
+          id: document.activeElement.id || null,
+          name: document.activeElement.getAttribute?.('name') || null,
+          placeholder: document.activeElement.getAttribute?.('placeholder') || null,
+          ariaLabel: document.activeElement.getAttribute?.('aria-label') || null,
+          selector: selectorFor(document.activeElement),
+        } : null;
+        return {
+          title: document.title,
+          url: location.href,
+          lang: document.documentElement?.lang || null,
+          counts: {
+            headings: document.querySelectorAll('h1, h2, h3, h4, h5, h6').length,
+            links: queryAllDeep('a[href]').length,
+            buttons: queryAllDeep('button, input[type="button"], input[type="submit"], [role="button"]').length,
+            inputs: queryAllDeep('input, select, textarea, [contenteditable="true"]').length,
+            forms: document.forms.length,
+            frames: frameEntries.length,
+            shadowHosts: shadowHosts.length,
+            scrollContainers: scrollContainers.length,
+          },
+          activeElement: active,
+          headings: Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).slice(0, maxItems).map((el) => ({
+            level: el.tagName.toLowerCase(),
+            text: norm(el.innerText || el.textContent || '').slice(0, 200),
+          })).filter((item) => item.text),
+          landmarks: ['header', 'nav', 'main', 'aside', 'footer', '[role="dialog"]', '[role="main"]', '[role="navigation"]']
+            .flatMap((selector) => Array.from(document.querySelectorAll(selector)).map((el) => ({
+              selector,
+              tag: el.tagName.toLowerCase(),
+              text: norm(el.innerText || el.textContent || '').slice(0, 120),
+            })))
+            .slice(0, maxItems),
+          controls: controlEntries,
+          forms: formEntries,
+          frames: frameEntries,
+          shadowHosts,
+          scrollContainers,
+        };
+      }, [{
+        maxItems: params.maxItems || 120,
+        includeHidden: !!params.includeHidden,
+        includeFrames: params.includeFrames !== false,
+        includeShadowDom: params.includeShadowDom !== false,
+      }], params.tabId ?? null);
+    case 'findDomControl':
+      return await executeInTab((needle, options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const lower = (value) => norm(value).toLowerCase();
+        const exact = !!options.exact;
+        const maxItems = Math.max(1, Number(options.maxItems || 20));
+        const includeFrames = options.includeFrames !== false;
+        const includeShadowDom = options.includeShadowDom !== false;
+        const kind = String(options.kind || 'all').toLowerCase();
+        const target = lower(needle);
+        if (!target) throw new Error('needle is required');
+        const seenRoots = new Set();
+        const roots = [];
+        const pushRoot = (root) => {
+          if (!root || seenRoots.has(root)) return;
+          seenRoots.add(root);
+          roots.push(root);
+        };
+        pushRoot(document);
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const aria = el.getAttribute('aria-label');
+          if (aria) return `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria.slice(0, 40))}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const labelTextFor = (el) => {
+          const parts = [];
+          if (el.id) {
+            for (const label of Array.from(document.querySelectorAll('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+          }
+          const closest = el.closest('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          return norm(parts.join(' '));
+        };
+        const traverseRoots = () => {
+          let index = 0;
+          while (index < roots.length) {
+            const root = roots[index];
+            index += 1;
+            const elements = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+            if (includeShadowDom) {
+              for (const el of elements) {
+                if (el.shadowRoot) pushRoot(el.shadowRoot);
+              }
+            }
+            if (includeFrames) {
+              for (const frame of Array.from(root.querySelectorAll('iframe, frame'))) {
+                try {
+                  if (frame.contentDocument) pushRoot(frame.contentDocument);
+                } catch {
+                  // Cross-origin frame skipped.
+                }
+              }
+            }
+          }
+        };
+        traverseRoots();
+        const candidates = [];
+        const allSelectors = {
+          all: 'a, button, input, select, textarea, [contenteditable="true"], [role], summary',
+          inputs: 'input, select, textarea, [contenteditable="true"]',
+          buttons: 'button, input[type="button"], input[type="submit"], [role="button"]',
+          links: 'a[href], [role="link"]',
+          forms: 'form',
+          text: 'body *',
+        };
+        const selector = allSelectors[kind] || allSelectors.all;
+        for (const root of roots) {
+          if (!root.querySelectorAll) continue;
+          for (const el of Array.from(root.querySelectorAll(selector))) {
+            if (!visible(el)) continue;
+            const text = norm([
+              el.innerText,
+              el.textContent,
+              el.value,
+              el.getAttribute('aria-label'),
+              el.getAttribute('placeholder'),
+              labelTextFor(el),
+            ].filter(Boolean).join(' '));
+            if (!text) continue;
+            const hint = lower([
+              el.getAttribute('aria-label'),
+              el.getAttribute('placeholder'),
+              el.getAttribute('name'),
+              el.id,
+              el.getAttribute('title'),
+              el.getAttribute('role'),
+              labelTextFor(el),
+            ].filter(Boolean).join(' '));
+            const candidateScore = (() => {
+              const hay = lower(text);
+              if (!hay) return -1;
+              if (exact) {
+                return hay === target ? 1000 : -1;
+              }
+              let score = 0;
+              if (hay === target) score += 1000;
+              if (hay.startsWith(target)) score += 700;
+              if (hay.includes(target)) score += 500;
+              const pieces = target.split(' ').filter(Boolean);
+              if (pieces.length) {
+                const overlap = pieces.filter((piece) => hay.includes(piece)).length;
+                score += overlap * 80;
+              }
+              if (hint.includes(target)) score += 120;
+              return score > 0 ? score : -1;
+            })();
+            if (candidateScore < 0) continue;
+            const rect = el.getBoundingClientRect();
+            candidates.push({
+              tag: el.tagName.toLowerCase(),
+              type: el.getAttribute('type') || null,
+              role: el.getAttribute('role') || null,
+              text: text.slice(0, 220),
+              label: labelTextFor(el).slice(0, 220),
+              hint: hint.slice(0, 220),
+              selector: selectorFor(el),
+              href: el.href || null,
+              id: el.id || null,
+              name: el.getAttribute('name') || null,
+              visible: true,
+              score: candidateScore,
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            });
+          }
+        }
+        candidates.sort((a, b) => b.score - a.score);
+        return {
+          needle: target,
+          exact,
+          kind,
+          matches: candidates.slice(0, maxItems),
+        };
+      }, [params.needle, {
+        kind: params.kind || 'all',
+        exact: !!params.exact,
+        maxItems: params.maxItems || 20,
+        includeFrames: params.includeFrames !== false,
+        includeShadowDom: params.includeShadowDom !== false,
+      }], params.tabId ?? null);
     case 'smartFocus':
       return await runAndRemember('smartFocus', (mode, textNeedle) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();

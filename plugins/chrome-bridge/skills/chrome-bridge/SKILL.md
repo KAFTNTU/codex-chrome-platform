@@ -42,6 +42,8 @@ That file explains:
 - `chrome_bridge_extract_text`: visible page text
 - `chrome_bridge_extract_html`: page HTML
 - `chrome_bridge_extract_visible_dom`: compact visible interactive DOM summary
+- `chrome_bridge_page_dom_snapshot`: deep DOM snapshot with forms, controls, frames, and shadow hosts
+- `chrome_bridge_find_dom_control`: find a control by text, label, placeholder, name, id, or role
 - `chrome_bridge_get_elements`: visible links, buttons, inputs, or all common interactives
 - `chrome_bridge_scroll`: scroll active tab vertically
 - `chrome_bridge_scroll_to_selector`: scroll to a CSS selector
