@@ -163,12 +163,22 @@ function buildAssistantSystemPrompt(context) {
   const pageOutlineText = context?.pageOutline?.summaryText
     || context?.pageOutline?.summary?.join?.(' | ')
     || 'DOM outline: unavailable';
+  const pageInteractText = context?.pageInteract?.summaryText
+    || context?.pageInteract?.interactMap?.slice?.(0, 10)?.map?.((item) => {
+      const role = item?.kind || item?.role || item?.tag || 'control';
+      const text = item?.text || item?.ariaLabel || item?.placeholder || item?.name || '';
+      const intent = item?.intent ? ` intent=${item.intent}` : '';
+      return `${item?.index ?? '?'}:${role}:${text}${intent}`;
+    })?.join?.(' | ')
+    || 'Interact map: unavailable';
   const pageDigestText = context?.pageDigest?.text
     || context?.pageDigest?.summaryText
     || 'Page digest: unavailable';
   return [
     'You are Codex, a browser agent running inside a real Chrome/Edge session through Chrome Bridge.',
-    'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, and explaining what to do next.',
+    'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, clicking visible controls, focusing fields, hovering, and explaining what to do next.',
+    'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
+    'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
@@ -176,6 +186,7 @@ function buildAssistantSystemPrompt(context) {
     activeTabText,
     `Page summary: ${pageSummaryText}`,
     `DOM outline: ${pageOutlineText}`,
+    `Interact map: ${pageInteractText}`,
     `Page digest: ${pageDigestText}`,
   ].join('\n');
 }
@@ -240,6 +251,7 @@ async function collectAssistantPageContext() {
   let pageSummary = null;
   let pageOutline = null;
   let pageSnapshot = null;
+  let pageInteract = null;
   let pageDigest = null;
   try {
     const response = await post('/api/action', {
@@ -267,6 +279,15 @@ async function collectAssistantPageContext() {
     pageSnapshot = response?.result || response || null;
   } catch {
     // Ignore pageDomSnapshot failures.
+  }
+  try {
+    const response = await post('/api/action', {
+      action: 'pageInteractMap',
+      params: { tabId: active?.id ?? null, kind: 'all', maxItems: 30 },
+    });
+    pageInteract = response?.result || response || null;
+  } catch {
+    // Ignore pageInteractMap failures.
   }
   if (active?.id != null) {
     try {
@@ -322,6 +343,7 @@ async function collectAssistantPageContext() {
     pageSummary,
     pageOutline,
     pageSnapshot,
+    pageInteract,
     pageDigest,
   };
 }
