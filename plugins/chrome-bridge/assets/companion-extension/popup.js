@@ -1,6 +1,7 @@
 let currentTabId = null;
 let pollTimer = null;
 let noticeTimer = null;
+let saveTimer = null;
 let currentAccessProfile = 'controlled';
 
 function el(id) {
@@ -27,6 +28,34 @@ function renderAccessProfile(profile) {
   const expanded = el('expandedProfile');
   controlled.classList.toggle('active', currentAccessProfile === 'controlled');
   expanded.classList.toggle('active', currentAccessProfile === 'expanded');
+}
+
+function openSettingsModal() {
+  const modal = el('settingsModal');
+  modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeSettingsModal() {
+  const modal = el('settingsModal');
+  modal.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+function syncFieldValue(id, value) {
+  const node = el(id);
+  if (!node) return;
+  if (document.activeElement === node) return;
+  const next = value ?? '';
+  if (node.value !== next) node.value = next;
+}
+
+function queueSaveAssistantSettings(delay = 200) {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    void saveAssistantSettings();
+  }, delay);
 }
 
 function renderActiveTab(activeTab) {
@@ -140,11 +169,11 @@ async function refresh() {
   try {
     const state = await chrome.runtime.sendMessage({ type: 'popup-get-state', tabId: currentTabId });
     el('clientId').textContent = state.clientId || '-';
-    el('serverUrl').value = state.serverUrl || 'http://127.0.0.1:17373';
+    syncFieldValue('serverUrl', state.serverUrl || 'http://127.0.0.1:17373');
     renderAccessProfile(state.accessProfile || 'controlled');
-    el('assistantApiEndpoint').value = state.assistantApiEndpoint || '';
-    el('assistantApiKey').value = state.assistantApiKey || '';
-    el('assistantTask').value = state.assistantTask || '';
+    syncFieldValue('assistantApiEndpoint', state.assistantApiEndpoint || '');
+    syncFieldValue('assistantApiKey', state.assistantApiKey || '');
+    syncFieldValue('assistantTask', state.assistantTask || '');
     el('mouseCueEnabled').checked = state.mouseCueEnabled !== false;
     renderStatus(state.bridgeState);
     renderActiveTab(state.activeTab);
@@ -280,6 +309,11 @@ el('save').addEventListener('click', saveServerUrl);
 el('saveAssistant').addEventListener('click', saveAssistantSettings);
 el('runAssistantTask').addEventListener('click', runAssistantTask);
 el('clearAssistantTask').addEventListener('click', clearAssistantTask);
+el('statusPill').addEventListener('click', openSettingsModal);
+el('closeSettingsModal').addEventListener('click', closeSettingsModal);
+el('settingsModal').addEventListener('click', (event) => {
+  if (event.target === el('settingsModal')) closeSettingsModal();
+});
 el('controlledProfile').addEventListener('click', async () => {
   currentAccessProfile = 'controlled';
   await saveAccessProfile();
@@ -293,12 +327,18 @@ el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);
 
-for (const id of ['assistantApiEndpoint', 'assistantApiKey', 'assistantTask']) {
-  el(id).addEventListener('change', saveAssistantSettings);
+for (const id of ['serverUrl', 'assistantApiEndpoint', 'assistantApiKey', 'assistantTask']) {
+  el(id).addEventListener('input', () => queueSaveAssistantSettings());
+  el(id).addEventListener('change', () => queueSaveAssistantSettings(0));
 }
+
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeSettingsModal();
+});
 
 refresh();
 pollTimer = setInterval(refresh, 1500);
 window.addEventListener('beforeunload', () => {
   if (pollTimer) clearInterval(pollTimer);
+  if (saveTimer) clearTimeout(saveTimer);
 });

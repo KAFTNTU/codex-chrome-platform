@@ -170,6 +170,13 @@
       border-color: #4f89b9;
       color: #f4fbff;
     }
+    .status-button {
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .status-button:hover {
+      background: #27303b;
+    }
     .details {
       border-radius: 9px;
       border: 1px solid var(--line);
@@ -203,6 +210,74 @@
       font-size: 10px;
       color: var(--muted);
     }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      z-index: 20;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: min(100%, 340px);
+      max-height: calc(100vh - 24px);
+      overflow: auto;
+      background: #141922;
+      border: 1px solid #2c3644;
+      border-radius: 16px;
+      box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5);
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .modal-title {
+      font-size: 14px;
+      font-weight: 800;
+    }
+    .modal-close {
+      width: 30px;
+      height: 30px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .chat-box {
+      background: #101520;
+      border: 1px solid #243042;
+      border-radius: 14px;
+      padding: 10px;
+      display: grid;
+      gap: 10px;
+    }
+    .choice-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .choice {
+      flex: 1;
+      min-width: 0;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-weight: 700;
+    }
+    .choice.active {
+      background: #21455f;
+      border-color: #4f89b9;
+      color: #f4fbff;
+    }
   </style>
 </head>
 <body>
@@ -210,22 +285,35 @@
     <div class="card">
       <div class="title">
         <span>Bridge</span>
-        <span id="statusPill" class="pill">...</span>
+        <button id="statusPill" class="pill status-button">...</button>
       </div>
+      <div class="row notice" id="notice"></div>
+    </div>
+  </div>
+  <div id="settingsModal" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+      <div class="modal-head">
+        <div>
+          <div id="settingsModalTitle" class="modal-title">Bridge settings</div>
+          <div class="sub">Everything in one place</div>
+        </div>
+        <button id="closeSettingsModal" class="modal-close" aria-label="Close">×</button>
+      </div>
+
+      <div class="chat-box">
+        <div class="sub">Access profile</div>
+        <div class="choice-row">
+          <button id="controlledProfile" class="choice">Controlled</button>
+          <button id="expandedProfile" class="choice">Expanded</button>
+        </div>
+      </div>
+
       <div class="row">
         <div class="sub">Server URL</div>
         <div class="inline">
           <input id="serverUrl" />
           <button id="save" class="primary">Save</button>
         </div>
-      </div>
-      <div class="row">
-        <div class="sub">Access profile</div>
-        <div class="inline">
-          <button id="controlledProfile" class="profile-button">Controlled</button>
-          <button id="expandedProfile" class="profile-button">Expanded</button>
-        </div>
-        <div class="sub">Expanded combines developer and local network capabilities, but sensitive steps still ask for confirmation.</div>
       </div>
       <div class="row">
         <div class="sub">API endpoint</div>
@@ -238,7 +326,7 @@
       <div class="row">
         <div class="sub">What should AI do?</div>
         <textarea id="assistantTask" placeholder="Describe the task for the assistant..."></textarea>
-        <div class="tiny">The task is saved locally in your browser and sent to the bridge when you press Run task.</div>
+        <div class="tiny">Saved locally in your browser and sent to the bridge when you press Run task.</div>
       </div>
       <div class="inline">
         <button id="saveAssistant" class="primary">Save AI settings</button>
@@ -259,56 +347,55 @@
         <div class="sub">Error</div>
         <code id="error"></code>
       </div>
-      <div class="row notice" id="notice"></div>
+
+      <details class="details">
+        <summary>Browser context</summary>
+        <div class="details-body">
+          <div class="row">
+            <div class="title" style="font-size:12px;font-weight:700;">
+              <span>Active tab</span>
+            </div>
+            <div id="activeTabTitle"></div>
+            <code id="activeTabUrl"></code>
+          </div>
+          <div class="actions">
+            <button id="attachMonitor" class="primary">Start monitor</button>
+            <button id="detachMonitor">Stop monitor</button>
+            <button id="clearMonitor" class="warn">Clear</button>
+          </div>
+          <div class="row small">
+            <span id="monitorState" class="sub">Monitor inactive</span>
+          </div>
+        </div>
+      </details>
+
+      <details class="details">
+        <summary>Diagnostics</summary>
+        <div class="details-body">
+          <div class="card" style="margin:0;">
+            <div class="title">
+              <span>Network</span>
+              <span id="networkCount" class="pill">0</span>
+            </div>
+            <div id="networkList" class="list"></div>
+          </div>
+          <div class="card" style="margin:0;">
+            <div class="title">
+              <span>Console</span>
+              <span id="consoleCount" class="pill">0</span>
+            </div>
+            <div id="consoleList" class="list"></div>
+          </div>
+          <div class="card" style="margin:0;">
+            <div class="title">
+              <span>Bridge commands</span>
+              <span id="commandCount" class="pill">0</span>
+            </div>
+            <div id="commandList" class="list"></div>
+          </div>
+        </div>
+      </details>
     </div>
-
-    <details class="details">
-      <summary>Browser context</summary>
-      <div class="details-body">
-        <div class="row">
-          <div class="title" style="font-size:12px;font-weight:700;">
-            <span>Active tab</span>
-          </div>
-          <div id="activeTabTitle"></div>
-          <code id="activeTabUrl"></code>
-        </div>
-        <div class="actions">
-          <button id="attachMonitor" class="primary">Start monitor</button>
-          <button id="detachMonitor">Stop monitor</button>
-          <button id="clearMonitor" class="warn">Clear</button>
-        </div>
-        <div class="row small">
-          <span id="monitorState" class="sub">Monitor inactive</span>
-        </div>
-      </div>
-    </details>
-
-    <details class="details">
-      <summary>Diagnostics</summary>
-      <div class="details-body">
-        <div class="card" style="margin:0;">
-          <div class="title">
-            <span>Network</span>
-            <span id="networkCount" class="pill">0</span>
-          </div>
-          <div id="networkList" class="list"></div>
-        </div>
-        <div class="card" style="margin:0;">
-          <div class="title">
-            <span>Console</span>
-            <span id="consoleCount" class="pill">0</span>
-          </div>
-          <div id="consoleList" class="list"></div>
-        </div>
-        <div class="card" style="margin:0;">
-          <div class="title">
-            <span>Bridge commands</span>
-            <span id="commandCount" class="pill">0</span>
-          </div>
-          <div id="commandList" class="list"></div>
-        </div>
-      </div>
-    </details>
   </div>
   <script src="popup.js"></script>
 </body>
