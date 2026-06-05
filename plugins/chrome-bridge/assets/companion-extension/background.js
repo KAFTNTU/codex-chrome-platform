@@ -304,6 +304,50 @@ function normalizeAssistantPlan(plan) {
   };
 }
 
+function normalizeCommandAction(action) {
+  const raw = String(action || '').trim();
+  if (!raw) return '';
+  const lower = raw.toLowerCase();
+  const aliasMap = {
+    get_active_tab: 'getActiveTab',
+    list_tabs: 'listTabs',
+    switch_tab: 'switchTab',
+    open_new_tab: 'openNewTab',
+    search_web: 'searchWeb',
+    reddit_compose_draft: 'redditComposeDraft',
+    universal_form_assist: 'universalFormAssist',
+    create_codex_tab_group: 'createCodexTabGroup',
+    open_in_codex_workspace: 'openInCodexWorkspace',
+    get_tab_workspace_state: 'getTabWorkspaceState',
+    add_active_tab_to_workspace: 'addActiveTabToWorkspace',
+    close_tab: 'closeTab',
+    navigate_and_wait: 'navigateAndWait',
+    wait_for_page_ready: 'waitForPageReady',
+    open_ato_module: 'openAtoModule',
+    open_ato_topic_by_title: 'openAtoTopicByTitle',
+    ensure_ato_context: 'ensureAtoContext',
+    reading_scroll_session: 'readingScrollSession',
+    smooth_scroll: 'smoothScroll',
+    scroll_to_selector: 'scrollToSelector',
+    page_summary: 'pageSummary',
+    page_dom_outline: 'pageDomOutline',
+    page_dom_snapshot: 'pageDomSnapshot',
+    page_section_reader: 'pageSectionReader',
+    page_intent_map: 'pageIntentMap',
+    page_interact_map: 'pageInteractMap',
+    page_interact_click: 'pageInteractClick',
+    semantic_click: 'semanticClick',
+    find_dom_control: 'findDomControl',
+    page_diff_memory: 'pageDiffMemory',
+    page_interact_type: 'pageInteractType',
+    page_interact_hover: 'pageInteractHover',
+    page_interact_focus: 'pageInteractFocus',
+    page_wizard_next: 'pageWizardNext',
+    page_wizard_prev: 'pageWizardPrev',
+  };
+  return aliasMap[lower] || raw;
+}
+
 function summarizeAssistantActions(results = []) {
   if (!Array.isArray(results) || !results.length) return 'No browser actions executed.';
   return results.map((entry, index) => {
@@ -2585,12 +2629,14 @@ async function inspectCanvas(maxItems = 5, includeDataUrl = false, tabId = null)
 
 async function handleCommand(command) {
   const params = command.params || {};
+  const normalizedAction = normalizeCommandAction(command.action);
   pushCommandLog({
-    action: command.action,
+    action: normalizedAction,
+    rawAction: command.action,
     paramsPreview: previewText(JSON.stringify(params)),
   });
-  recordMacroAction(command.action, params);
-  switch (command.action) {
+  recordMacroAction(normalizedAction, params);
+  switch (normalizedAction) {
     case 'getActiveTab':
       return await activeTab();
     case 'listTabs':
