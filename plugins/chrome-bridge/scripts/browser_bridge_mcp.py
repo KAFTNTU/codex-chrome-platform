@@ -69,7 +69,9 @@ TOOLS = [
     {"name":"chrome_bridge_canvas_inspect","description":"Inspect canvas elements on the page and optionally return previews.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeDataUrl":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_overview","description":"Return a compact structural overview of the current page.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_page_dom_snapshot","description":"Return a deep DOM snapshot with forms, controls, frames, shadow hosts, and visible interactive elements.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeHidden":{"type":"boolean"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_page_dom_outline","description":"Return a compact DOM outline with headings, forms, controls, landmarks, and optional text blocks.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"includeTextBlocks":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_find_dom_control","description":"Find DOM controls by text, label, placeholder, name, id, role, or kind across the current page.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["needle"],"additionalProperties":False}},
+    {"name":"chrome_bridge_describe_dom_element","description":"Describe a specific DOM element or the best match for a needle, including label, attributes, form context, and geometry.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_smart_focus","description":"Focus the most likely input or button on the page.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["input","button"]},"text":{"type":"string"}},"additionalProperties":False}},
     {"name":"chrome_bridge_open_file_picker","description":"Open the system file picker for an input[type=file].","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_set_file_input_files","description":"Set files on an input[type=file] using local filesystem paths.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"tabId":{"type":"integer"}},"required":["selector","files"],"additionalProperties":False}},
@@ -345,12 +347,27 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
             if field in arguments:
                 payload[field]=int(arguments[field]) if field in ("maxItems","tabId") else bool(arguments[field])
         return as_text_content(call_bridge("pageDomSnapshot",payload))
+    if name=="chrome_bridge_page_dom_outline":
+        payload={}
+        for field in ("maxItems","includeFrames","includeShadowDom","includeTextBlocks","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("maxItems","tabId") else bool(arguments[field])
+        return as_text_content(call_bridge("pageDomOutline",payload))
     if name=="chrome_bridge_find_dom_control":
         payload={"needle":arguments["needle"]}
         for field in ("kind","exact","maxItems","includeFrames","includeShadowDom","tabId"):
             if field in arguments:
                 payload[field]=int(arguments[field]) if field in ("maxItems","tabId") else bool(arguments[field]) if field in ("exact","includeFrames","includeShadowDom") else arguments[field]
         return as_text_content(call_bridge("findDomControl",payload))
+    if name=="chrome_bridge_describe_dom_element":
+        payload={}
+        for field in ("selector","needle","kind"):
+            if field in arguments and arguments[field] is not None:
+                payload[field]=arguments[field]
+        for field in ("exact","maxItems","includeFrames","includeShadowDom","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("maxItems","tabId") else bool(arguments[field]) if field in ("exact","includeFrames","includeShadowDom") else arguments[field]
+        return as_text_content(call_bridge("describeDomElement",payload))
     if name=="chrome_bridge_smart_focus":
         payload={}
         if "mode" in arguments: payload["mode"]=arguments["mode"]

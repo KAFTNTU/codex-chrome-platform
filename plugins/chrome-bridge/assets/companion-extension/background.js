@@ -3314,6 +3314,187 @@ async function handleCommand(command) {
           landmarks,
         };
       }, [], params.tabId ?? null);
+    case 'pageDomOutline':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const maxItems = Math.max(1, Number(options.maxItems || 80));
+        const includeFrames = options.includeFrames !== false;
+        const includeShadowDom = options.includeShadowDom !== false;
+        const includeTextBlocks = options.includeTextBlocks !== false;
+        const isVisible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const seenRoots = new Set();
+        const roots = [];
+        const pushRoot = (root) => {
+          if (!root || seenRoots.has(root)) return;
+          seenRoots.add(root);
+          roots.push(root);
+        };
+        pushRoot(document);
+        let index = 0;
+        while (index < roots.length) {
+          const root = roots[index];
+          index += 1;
+          const all = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+          if (includeShadowDom) {
+            for (const el of all) {
+              if (el.shadowRoot) pushRoot(el.shadowRoot);
+            }
+          }
+          if (includeFrames) {
+            for (const frame of Array.from(root.querySelectorAll('iframe, frame'))) {
+              try {
+                if (frame.contentDocument) pushRoot(frame.contentDocument);
+              } catch {
+                // Cross-origin frame skipped.
+              }
+            }
+          }
+        }
+        const qAll = (selector) => {
+          const out = [];
+          const seen = new Set();
+          for (const root of roots) {
+            if (!root.querySelectorAll) continue;
+            for (const el of Array.from(root.querySelectorAll(selector))) {
+              if (seen.has(el)) continue;
+              seen.add(el);
+              out.push(el);
+            }
+          }
+          return out;
+        };
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const labelTextFor = (el) => {
+          const parts = [];
+          if (el.id) {
+            for (const label of Array.from(qAll('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+          }
+          const closest = el.closest('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          return norm(parts.join(' '));
+        };
+        const collect = (selector, kind) => qAll(selector).filter(isVisible).slice(0, maxItems).map((el) => {
+          const rect = el.getBoundingClientRect();
+          return {
+            kind,
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || null,
+            role: el.getAttribute('role') || null,
+            selector: selectorFor(el),
+            text: norm(el.innerText || el.textContent || el.value || '').slice(0, 180),
+            label: labelTextFor(el).slice(0, 180),
+            placeholder: el.getAttribute('placeholder') || null,
+            name: el.getAttribute('name') || null,
+            id: el.id || null,
+            href: el.href || null,
+            visible: true,
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          };
+        });
+        const headings = collect('h1, h2, h3, h4, h5, h6', 'heading');
+        const forms = qAll('form').slice(0, maxItems).map((form, index) => {
+          const rect = form.getBoundingClientRect();
+          const fields = Array.from(form.elements || []).slice(0, 40).map((field) => {
+            const fRect = field.getBoundingClientRect ? field.getBoundingClientRect() : { left: 0, top: 0, width: 0, height: 0 };
+            return {
+              tag: field.tagName?.toLowerCase?.() || null,
+              type: field.getAttribute?.('type') || null,
+              name: field.getAttribute?.('name') || null,
+              id: field.id || null,
+              selector: selectorFor(field),
+              label: labelTextFor(field).slice(0, 160),
+              placeholder: field.getAttribute?.('placeholder') || null,
+              valuePreview: String('value' in field ? field.value || '' : '').slice(0, 80),
+              visible: isVisible(field),
+              x: Math.round(fRect.left || 0),
+              y: Math.round(fRect.top || 0),
+              width: Math.round(fRect.width || 0),
+              height: Math.round(fRect.height || 0),
+            };
+          });
+          return {
+            kind: 'form',
+            index,
+            selector: selectorFor(form),
+            id: form.id || null,
+            name: form.getAttribute('name') || null,
+            action: form.getAttribute('action') || null,
+            method: form.getAttribute('method') || 'get',
+            fieldCount: form.elements?.length || 0,
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            fields,
+          };
+        });
+        const controls = [
+          ...collect('input, textarea, select, button, [contenteditable="true"]', 'control'),
+          ...collect('a[href], [role="button"], [role="link"], summary', 'interactive'),
+        ].slice(0, maxItems);
+        const landmarks = ['header', 'nav', 'main', 'aside', 'footer', '[role="main"]', '[role="navigation"]', '[role="dialog"]']
+          .flatMap((selector) => collect(selector, 'landmark'))
+          .slice(0, maxItems);
+        const textBlocks = includeTextBlocks
+          ? qAll('p, li, blockquote, article, section, td, th, figcaption')
+            .filter(isVisible)
+            .slice(0, maxItems)
+            .map((el) => {
+              const rect = el.getBoundingClientRect();
+              return {
+                kind: 'text',
+                tag: el.tagName.toLowerCase(),
+                selector: selectorFor(el),
+                text: norm(el.innerText || el.textContent || '').slice(0, 240),
+                x: Math.round(rect.left),
+                y: Math.round(rect.top),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height),
+              };
+            })
+          : [];
+        return {
+          title: document.title,
+          url: location.href,
+          counts: {
+            headings: headings.length,
+            forms: forms.length,
+            controls: controls.length,
+            landmarks: landmarks.length,
+            textBlocks: textBlocks.length,
+            frames: qAll('iframe, frame').length,
+            shadowHosts: qAll('*').filter((el) => !!el.shadowRoot).length,
+          },
+          headings,
+          forms,
+          controls,
+          landmarks,
+          textBlocks,
+        };
+      }, [{
+        maxItems: params.maxItems || 80,
+        includeFrames: params.includeFrames !== false,
+        includeShadowDom: params.includeShadowDom !== false,
+        includeTextBlocks: params.includeTextBlocks !== false,
+      }], params.tabId ?? null);
     case 'pageDomSnapshot':
       return await executeInTab((options) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -3766,6 +3947,200 @@ async function handleCommand(command) {
         kind: params.kind || 'all',
         exact: !!params.exact,
         maxItems: params.maxItems || 20,
+        includeFrames: params.includeFrames !== false,
+        includeShadowDom: params.includeShadowDom !== false,
+      }], params.tabId ?? null);
+    case 'describeDomElement':
+      return await executeInTab((payload) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const lower = (value) => norm(value).toLowerCase();
+        const includeFrames = payload.includeFrames !== false;
+        const includeShadowDom = payload.includeShadowDom !== false;
+        const selector = norm(payload.selector || '');
+        const needle = norm(payload.needle || '');
+        const exact = !!payload.exact;
+        const seenRoots = new Set();
+        const roots = [];
+        const pushRoot = (root) => {
+          if (!root || seenRoots.has(root)) return;
+          seenRoots.add(root);
+          roots.push(root);
+        };
+        pushRoot(document);
+        let index = 0;
+        while (index < roots.length) {
+          const root = roots[index];
+          index += 1;
+          const all = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+          if (includeShadowDom) {
+            for (const el of all) {
+              if (el.shadowRoot) pushRoot(el.shadowRoot);
+            }
+          }
+          if (includeFrames) {
+            for (const frame of Array.from(root.querySelectorAll('iframe, frame'))) {
+              try {
+                if (frame.contentDocument) pushRoot(frame.contentDocument);
+              } catch {
+                // Cross-origin frame skipped.
+              }
+            }
+          }
+        }
+        const qAll = (query) => {
+          const out = [];
+          const seen = new Set();
+          for (const root of roots) {
+            if (!root.querySelectorAll) continue;
+            for (const el of Array.from(root.querySelectorAll(query))) {
+              if (seen.has(el)) continue;
+              seen.add(el);
+              out.push(el);
+            }
+          }
+          return out;
+        };
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const labelTextFor = (el) => {
+          const parts = [];
+          if (el.id) {
+            for (const label of Array.from(qAll('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+            const ids = String(el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+            for (const id of ids) {
+              const ref = qAll(`#${CSS.escape(id)}`)[0];
+              if (ref) parts.push(ref.innerText || ref.textContent || '');
+            }
+          }
+          const closest = el.closest('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          return norm(parts.join(' '));
+        };
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const describe = (el, source) => {
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          return {
+            source,
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || null,
+            role: el.getAttribute('role') || null,
+            selector: selectorFor(el),
+            text: norm(el.innerText || el.textContent || el.value || '').slice(0, 240),
+            label: labelTextFor(el).slice(0, 240),
+            placeholder: el.getAttribute('placeholder') || null,
+            ariaLabel: el.getAttribute('aria-label') || null,
+            title: el.getAttribute('title') || null,
+            name: el.getAttribute('name') || null,
+            id: el.id || null,
+            href: el.href || null,
+            valuePreview: ('value' in el ? String(el.value || '') : '').slice(0, 160),
+            checked: typeof el.checked === 'boolean' ? !!el.checked : undefined,
+            disabled: !!el.disabled,
+            required: !!el.required,
+            contentEditable: !!el.isContentEditable,
+            visible: visible(el),
+            attributes: Array.from(el.attributes || []).slice(0, 40).map((attr) => ({ name: attr.name, value: attr.value })).filter((attr) => !['style'].includes(attr.name)),
+            form: el.form ? {
+              selector: selectorFor(el.form),
+              id: el.form.id || null,
+              name: el.form.getAttribute('name') || null,
+              action: el.form.getAttribute('action') || null,
+              method: el.form.getAttribute('method') || 'get',
+            } : null,
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          };
+        };
+        const candidateSelectors = [];
+        if (selector) candidateSelectors.push(selector);
+        if (needle) {
+          const target = lower(needle);
+          const byKind = String(payload.kind || 'all').toLowerCase();
+          const selectorMap = {
+            all: 'a, button, input, select, textarea, [contenteditable="true"], [role], summary',
+            inputs: 'input, select, textarea, [contenteditable="true"]',
+            buttons: 'button, input[type="button"], input[type="submit"], [role="button"]',
+            links: 'a[href], [role="link"]',
+            forms: 'form',
+            text: 'body *',
+          };
+          const searchSelector = selectorMap[byKind] || selectorMap.all;
+          const candidates = qAll(searchSelector)
+            .filter(visible)
+            .map((el) => {
+              const combined = lower([
+                el.innerText,
+                el.textContent,
+                el.value,
+                el.getAttribute('aria-label'),
+                el.getAttribute('placeholder'),
+                labelTextFor(el),
+                el.getAttribute('name'),
+                el.id,
+              ].filter(Boolean).join(' '));
+              let score = 0;
+              if (exact ? combined === target : combined.includes(target)) score += exact ? 1000 : 700;
+              if (combined.startsWith(target)) score += 120;
+              const rect = el.getBoundingClientRect();
+              return { el, score, rect };
+            })
+            .filter((item) => item.score > 0)
+            .sort((a, b) => b.score - a.score);
+          const top = candidates[0]?.el || null;
+          const list = candidates.slice(0, Math.max(1, Number(payload.maxItems || 10))).map((item) => describe(item.el, 'needle'));
+          return {
+            title: document.title,
+            url: location.href,
+            found: !!top,
+            selector: top ? selectorFor(top) : null,
+            exact,
+            needle: target,
+            element: top ? describe(top, 'needle') : null,
+            matches: list,
+            activeElement: document.activeElement ? describe(document.activeElement, 'activeElement') : null,
+          };
+        }
+        const source = document.activeElement && document.activeElement !== document.body ? document.activeElement : null;
+        const el = source || qAll('input, textarea, select, button, [contenteditable="true"], a[href], [role], summary')[0] || null;
+        if (!el) {
+          return {
+            title: document.title,
+            url: location.href,
+            found: false,
+            element: null,
+            activeElement: null,
+          };
+        }
+        return {
+          title: document.title,
+          url: location.href,
+          found: true,
+          element: describe(el, source ? 'activeElement' : 'firstInteractive'),
+          activeElement: document.activeElement ? describe(document.activeElement, 'activeElement') : null,
+        };
+      }, [{
+        selector: params.selector || null,
+        needle: params.needle || null,
+        exact: !!params.exact,
+        kind: params.kind || 'all',
+        maxItems: params.maxItems || 10,
         includeFrames: params.includeFrames !== false,
         includeShadowDom: params.includeShadowDom !== false,
       }], params.tabId ?? null);

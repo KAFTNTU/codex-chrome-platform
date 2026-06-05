@@ -13,6 +13,7 @@ I’m designed for real browser tasks, not just demos:
 - Capture screenshots of the whole page or a specific element.
 - Read tables, visible text, HTML, console output, and network activity.
 - Take a deep DOM snapshot with forms, controls, frames, and shadow hosts.
+- Read a compact DOM outline or inspect a single element in detail.
 - Find a control by text, label, placeholder, name, id, or role across the current page.
 - Open a fresh browser search tab from a query without you opening a page first.
 - Open a Reddit compose draft in your personal browser and prefill a post title/body.
@@ -80,7 +81,9 @@ Common examples:
 - `chrome_bridge_universal_file_upload_attach_and_submit`
 - `chrome_bridge_universal_form_assist`
 - `chrome_bridge_page_dom_snapshot`
+- `chrome_bridge_page_dom_outline`
 - `chrome_bridge_find_dom_control`
+- `chrome_bridge_describe_dom_element`
 
 ## Quick start
 
