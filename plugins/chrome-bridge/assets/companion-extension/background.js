@@ -163,6 +163,9 @@ function buildAssistantSystemPrompt(context) {
   const pageOutlineText = context?.pageOutline?.summaryText
     || context?.pageOutline?.summary?.join?.(' | ')
     || 'DOM outline: unavailable';
+  const pageDigestText = context?.pageDigest?.text
+    || context?.pageDigest?.summaryText
+    || 'Page digest: unavailable';
   return [
     'You are Codex, a browser agent running inside a real Chrome/Edge session through Chrome Bridge.',
     'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, and explaining what to do next.',
@@ -173,6 +176,7 @@ function buildAssistantSystemPrompt(context) {
     activeTabText,
     `Page summary: ${pageSummaryText}`,
     `DOM outline: ${pageOutlineText}`,
+    `Page digest: ${pageDigestText}`,
   ].join('\n');
 }
 
@@ -236,6 +240,7 @@ async function collectAssistantPageContext() {
   let pageSummary = null;
   let pageOutline = null;
   let pageSnapshot = null;
+  let pageDigest = null;
   try {
     const response = await post('/api/action', {
       action: 'pageSummary',
@@ -263,11 +268,61 @@ async function collectAssistantPageContext() {
   } catch {
     // Ignore pageDomSnapshot failures.
   }
+  if (active?.id != null) {
+    try {
+      pageDigest = await executeInTab(() => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+          .filter(visible)
+          .slice(0, 10)
+          .map((el) => norm(el.innerText || el.textContent || '').slice(0, 160))
+          .filter(Boolean);
+        const controls = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"]'))
+          .filter(visible)
+          .slice(0, 16)
+          .map((el) => {
+            const text = norm(el.innerText || el.textContent || el.value || '').slice(0, 120);
+            return [
+              el.tagName.toLowerCase(),
+              el.getAttribute('type') || '',
+              el.getAttribute('role') || '',
+              text,
+              el.getAttribute('placeholder') || '',
+              el.getAttribute('aria-label') || '',
+            ].filter(Boolean).join(' | ');
+          });
+        const text = norm(document.body?.innerText || document.body?.textContent || '').slice(0, 2000);
+        return {
+          title: document.title || '',
+          url: location.href,
+          headings,
+          controls,
+          text,
+          summaryText: [
+            `Title: ${document.title || '(untitled)'}`,
+            `URL: ${location.href}`,
+            `Headings: ${headings.slice(0, 5).join(' || ') || '(none)'}`,
+            `Controls: ${controls.slice(0, 8).join(' || ') || '(none)'}`,
+            `Text preview: ${text.slice(0, 800) || '(none)'}`,
+          ].join(' | '),
+        };
+      }, [], active.id);
+    } catch {
+      // Ignore direct digest failures.
+    }
+  }
   return {
     activeTab: active,
     pageSummary,
     pageOutline,
     pageSnapshot,
+    pageDigest,
   };
 }
 
@@ -5512,6 +5567,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               pageSummary: browserContext.pageSummary,
               pageOutline: browserContext.pageOutline,
               pageSnapshot: browserContext.pageSnapshot,
+              pageDigest: browserContext.pageDigest,
             },
           });
           const assistantText = completion.reply || 'No response text returned.';
