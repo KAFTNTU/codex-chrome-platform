@@ -311,16 +311,19 @@
       gap: 6px;
       max-height: 220px;
       overflow: auto;
+      overflow-x: hidden;
       padding-right: 2px;
     }
     .chat-msg {
-      max-width: 92%;
+      max-width: 100%;
+      width: fit-content;
       padding: 8px 10px;
       border-radius: 12px;
       border: 1px solid var(--line);
       background: var(--panel-2);
       display: grid;
       gap: 3px;
+      overflow-wrap: anywhere;
     }
     .chat-msg.user {
       margin-left: auto;
@@ -380,15 +383,8 @@
         </label>
         <div class="tiny">Stored locally only when enabled.</div>
       </div>
-      <div class="row">
-        <div class="sub">What should AI do?</div>
-        <textarea id="assistantTask" placeholder="Describe the task for the assistant..."></textarea>
-        <div class="tiny">The task is saved locally in your browser and sent to the bridge when you press Run task.</div>
-      </div>
       <div class="inline">
         <button id="saveAssistant" class="primary">Save AI settings</button>
-        <button id="runAssistantTask" class="primary">Run task</button>
-        <button id="clearAssistantTask">Clear task</button>
       </div>
       <div class="row">
         <label class="toggle">
@@ -420,6 +416,15 @@
         <button id="clearAssistantChat">Clear chat</button>
       </div>
       <div id="assistantChatList" class="chat-history"></div>
+      <div class="row">
+        <div class="sub">What should AI do?</div>
+        <textarea id="assistantTask" placeholder="Describe the task for the assistant..."></textarea>
+        <div class="tiny">Write here and press Send. The text is saved locally and sent to the bridge.</div>
+      </div>
+      <div class="inline">
+        <button id="sendAssistantTask" class="primary">Send</button>
+        <button id="clearAssistantTask">Clear draft</button>
+      </div>
     </div>
 
     <div class="card">

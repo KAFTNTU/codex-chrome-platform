@@ -351,7 +351,7 @@ async function clearMonitor() {
 
 el('save').addEventListener('click', saveServerUrl);
 el('saveAssistant').addEventListener('click', saveAssistantSettings);
-el('runAssistantTask').addEventListener('click', runAssistantTask);
+el('sendAssistantTask').addEventListener('click', runAssistantTask);
 el('clearAssistantTask').addEventListener('click', clearAssistantTask);
 el('clearAssistantChat').addEventListener('click', clearAssistantChat);
 el('statusPill').addEventListener('click', () => {
@@ -375,6 +375,13 @@ for (const id of ['serverUrl', 'assistantApiEndpoint', 'assistantModel', 'assist
   el(id).addEventListener('input', () => queueSaveAssistantSettings());
   el(id).addEventListener('change', () => queueSaveAssistantSettings(0));
 }
+
+el('assistantTask').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    void runAssistantTask();
+  }
+});
 
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
