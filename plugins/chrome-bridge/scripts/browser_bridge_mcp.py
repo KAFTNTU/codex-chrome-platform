@@ -70,9 +70,19 @@ TOOLS = [
     {"name":"chrome_bridge_page_overview","description":"Return a compact structural overview of the current page.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
     {"name":"chrome_bridge_page_dom_snapshot","description":"Return a deep DOM snapshot with forms, controls, frames, shadow hosts, and visible interactive elements.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeHidden":{"type":"boolean"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_dom_outline","description":"Return a compact DOM outline with headings, forms, controls, landmarks, and optional text blocks.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"includeTextBlocks":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_page_summary","description":"Return a concise summary of the current page with title, url, headings, controls, and key notes.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_page_section_reader","description":"Read the page as logical sections with titles, visible text, and nearby controls.","inputSchema":{"type":"object","properties":{"maxSections":{"type":"integer"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_find_dom_control","description":"Find DOM controls by text, label, placeholder, name, id, role, or kind across the current page.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["needle"],"additionalProperties":False}},
     {"name":"chrome_bridge_describe_dom_element","description":"Describe a specific DOM element or the best match for a needle, including label, attributes, form context, and geometry.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_modal_detector","description":"Detect visible modals, dialogs, popovers, toasts, and blocking overlays on the page.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_repeated_element_matcher","description":"Find repeated similar elements on the page and group them by signature.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_next_visible_control","description":"Find the next visible interactive control relative to a needle or current focus.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"direction":{"type":"string","enum":["next","previous","first","last"]},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_semantic_click","description":"Click a page element by intent or visible text rather than a strict selector.","inputSchema":{"type":"object","properties":{"intent":{"type":"string"},"selector":{"type":"string"},"tabId":{"type":"integer"}},"required":["intent"],"additionalProperties":False}},
+    {"name":"chrome_bridge_page_diff_memory","description":"Store a short-term page snapshot and return diffs from the previous snapshot for the tab.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_resolve_dom_route","description":"Resolve the DOM route and geometry for a selector or visible text needle.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_smart_focus","description":"Focus the most likely input or button on the page.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["input","button"]},"text":{"type":"string"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_watch_downloads","description":"Watch recent browser downloads and return a compact snapshot of matching items.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"waitForComplete":{"type":"boolean"},"timeoutMs":{"type":"integer"},"pollMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wait_for_download","description":"Wait until a matching browser download appears or completes.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"waitForComplete":{"type":"boolean"},"timeoutMs":{"type":"integer"},"pollMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_open_file_picker","description":"Open the system file picker for an input[type=file].","inputSchema":{"type":"object","properties":{"selector":{"type":"string"}},"required":["selector"],"additionalProperties":False}},
     {"name":"chrome_bridge_set_file_input_files","description":"Set files on an input[type=file] using local filesystem paths.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"tabId":{"type":"integer"}},"required":["selector","files"],"additionalProperties":False}},
     {"name":"chrome_bridge_file_upload_assistant_preview","description":"Preview assistive upload: validates allowed/manual files and returns file info + page screenshot before attachment.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"files":{"type":"array","items":{"type":"string"}},"manualSelectedFiles":{"type":"boolean"},"userOwnedCompletedWork":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["files"],"additionalProperties":False}},
@@ -88,6 +98,10 @@ TOOLS = [
     {"name":"chrome_bridge_universal_file_upload_preflight_attach_and_submit","description":"Run preflight, then attach and submit in one guarded action.","inputSchema":{"type":"object","properties":{"fileQuery":{"type":"string"},"multiple":{"type":"boolean"},"manualSelectedFiles":{"type":"array","items":{"type":"string"}},"selector":{"type":"string"},"confirmAttach":{"type":"boolean"},"confirmSubmit":{"type":"boolean"},"userOwnedCompletedWork":{"type":"boolean"},"allowEducationPlatformUpload":{"type":"boolean"},"usePreflightCopy":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["fileQuery","confirmAttach","confirmSubmit","userOwnedCompletedWork","allowEducationPlatformUpload"],"additionalProperties":False}},
     {"name":"chrome_bridge_get_session_memory","description":"Read short-term bridge memory for the current page session.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_clear_session_memory","description":"Clear short-term bridge memory for a tab or for all tabs.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_save_form_profile","description":"Save a reusable set of form field values for the current browser workflow.","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"profile":{"type":"object"},"tabId":{"type":"integer"}},"required":["name","profile"],"additionalProperties":False}},
+    {"name":"chrome_bridge_list_form_profiles","description":"List saved form profiles.","inputSchema":{"type":"object","properties":{},"additionalProperties":False}},
+    {"name":"chrome_bridge_delete_form_profile","description":"Delete a saved form profile by name.","inputSchema":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":False}},
+    {"name":"chrome_bridge_form_profile_autofill","description":"Autofill the page using a saved form profile.","inputSchema":{"type":"object","properties":{"name":{"type":"string"},"tabId":{"type":"integer"}},"required":["name"],"additionalProperties":False}},
     {"name":"chrome_bridge_get_console_log","description":"Read captured console logs and page exceptions without opening DevTools.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_clear_console_log","description":"Clear captured console logs for a tab.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_get_cookies","description":"Read cookies for the current page URL or a provided URL.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"additionalProperties":False}},
@@ -353,6 +367,16 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
             if field in arguments:
                 payload[field]=int(arguments[field]) if field in ("maxItems","tabId") else bool(arguments[field])
         return as_text_content(call_bridge("pageDomOutline",payload))
+    if name=="chrome_bridge_page_summary":
+        payload={}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("pageSummary",payload))
+    if name=="chrome_bridge_page_section_reader":
+        payload={}
+        for field in ("maxSections","maxItems","includeFrames","includeShadowDom","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("maxSections","maxItems","tabId") else bool(arguments[field])
+        return as_text_content(call_bridge("pageSectionReader",payload))
     if name=="chrome_bridge_find_dom_control":
         payload={"needle":arguments["needle"]}
         for field in ("kind","exact","maxItems","includeFrames","includeShadowDom","tabId"):
@@ -368,11 +392,57 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
             if field in arguments:
                 payload[field]=int(arguments[field]) if field in ("maxItems","tabId") else bool(arguments[field]) if field in ("exact","includeFrames","includeShadowDom") else arguments[field]
         return as_text_content(call_bridge("describeDomElement",payload))
+    if name=="chrome_bridge_modal_detector":
+        payload={}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("modalDetector",payload))
+    if name=="chrome_bridge_repeated_element_matcher":
+        payload={}
+        for field in ("needle","kind","maxItems","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("maxItems","tabId") else arguments[field]
+        return as_text_content(call_bridge("repeatedElementMatcher",payload))
+    if name=="chrome_bridge_next_visible_control":
+        payload={}
+        for field in ("needle","kind","direction","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field=="tabId" else arguments[field]
+        return as_text_content(call_bridge("nextVisibleControl",payload))
+    if name=="chrome_bridge_semantic_click":
+        payload={"intent":arguments["intent"]}
+        if "selector" in arguments and arguments["selector"] is not None:
+            payload["selector"]=arguments["selector"]
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("semanticClick",payload))
+    if name=="chrome_bridge_page_diff_memory":
+        payload={}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("pageDiffMemory",payload))
+    if name=="chrome_bridge_resolve_dom_route":
+        payload={}
+        for field in ("selector","needle","kind"):
+            if field in arguments and arguments[field] is not None:
+                payload[field]=arguments[field]
+        if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("resolveDomRoute",payload))
     if name=="chrome_bridge_smart_focus":
         payload={}
         if "mode" in arguments: payload["mode"]=arguments["mode"]
         if "text" in arguments: payload["text"]=arguments["text"]
         return as_text_content(call_bridge("smartFocus",payload))
+    if name=="chrome_bridge_watch_downloads":
+        payload={}
+        for field in ("needle","waitForComplete","timeoutMs","pollMs","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("timeoutMs","pollMs","tabId") else bool(arguments[field]) if field=="waitForComplete" else arguments[field]
+        return as_text_content(call_bridge("watchDownloads",payload))
+    if name=="chrome_bridge_wait_for_download":
+        payload={}
+        for field in ("needle","waitForComplete","timeoutMs","pollMs","tabId"):
+            if field in arguments:
+                payload[field]=int(arguments[field]) if field in ("timeoutMs","pollMs","tabId") else bool(arguments[field]) if field=="waitForComplete" else arguments[field]
+        return as_text_content(call_bridge("waitForDownload",payload))
     if name=="chrome_bridge_open_file_picker": return as_text_content(call_bridge("openFilePicker",{"selector":arguments["selector"]}))
     if name=="chrome_bridge_set_file_input_files":
         payload={"selector":arguments["selector"],"files":arguments["files"]}
@@ -461,6 +531,18 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         payload={}
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
         return as_text_content(call_bridge("clearSessionMemory",payload))
+    if name=="chrome_bridge_save_form_profile":
+        payload={"name":arguments["name"],"profile":arguments["profile"]}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("saveFormProfile",payload))
+    if name=="chrome_bridge_list_form_profiles":
+        return as_text_content(call_bridge("listFormProfiles"))
+    if name=="chrome_bridge_delete_form_profile":
+        return as_text_content(call_bridge("deleteFormProfile",{"name":arguments["name"]}))
+    if name=="chrome_bridge_form_profile_autofill":
+        payload={"name":arguments["name"]}
+        if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
+        return as_text_content(call_bridge("formProfileAutofill",payload))
     if name=="chrome_bridge_get_console_log":
         payload={}
         if "tabId" in arguments: payload["tabId"]=int(arguments["tabId"])
@@ -515,7 +597,7 @@ def main()->None:
         method=message.get("method"); msg_id=message.get("id")
         try:
             if method=="initialize":
-              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.10"}})
+              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.11"}})
             elif method=="notifications/initialized":
                 continue
             elif method=="tools/list":

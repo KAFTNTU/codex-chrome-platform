@@ -42,6 +42,10 @@ let consoleState = {
 };
 let sessionMemory = {
   byTab: {},
+  pageSnapshotsByTab: {},
+};
+let downloadMemory = {
+  recent: [],
 };
 let macroState = {
   recording: false,
@@ -50,9 +54,10 @@ let macroState = {
   startedAt: null,
 };
 let namedRecipes = {};
+let formProfiles = {};
 
 async function loadState() {
-  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'bridgeToken', 'namedRecipes', 'mouseCueEnabled', 'workspaceGroupId', 'workspaceGroupTitle', 'workspaceGroupColor', 'accessProfile']);
+  const stored = await chrome.storage.local.get(['clientId', 'serverUrl', 'bridgeToken', 'namedRecipes', 'formProfiles', 'mouseCueEnabled', 'workspaceGroupId', 'workspaceGroupTitle', 'workspaceGroupColor', 'accessProfile']);
   state.clientId = stored.clientId || crypto.randomUUID();
   state.serverUrl = stored.serverUrl || DEFAULT_SERVER;
   state.bridgeToken = stored.bridgeToken || '';
@@ -62,6 +67,7 @@ async function loadState() {
   state.workspaceGroupTitle = stored.workspaceGroupTitle || 'Codex Agent Workspace';
   state.workspaceGroupColor = stored.workspaceGroupColor || 'blue';
   namedRecipes = stored.namedRecipes || {};
+  formProfiles = stored.formProfiles || {};
   await chrome.storage.local.set({
     clientId: state.clientId,
     serverUrl: state.serverUrl,
@@ -71,6 +77,7 @@ async function loadState() {
     workspaceGroupId: state.workspaceGroupId,
     workspaceGroupTitle: state.workspaceGroupTitle,
     workspaceGroupColor: state.workspaceGroupColor,
+    formProfiles,
   });
   stateLoaded = true;
 }
@@ -83,6 +90,10 @@ async function ensureStateLoaded() {
 
 async function persistRecipes() {
   await chrome.storage.local.set({ namedRecipes });
+}
+
+async function persistFormProfiles() {
+  await chrome.storage.local.set({ formProfiles });
 }
 
 async function persistBridgeState() {
@@ -277,10 +288,98 @@ function getSessionMemory(tabId = null) {
 function clearSessionMemory(tabId = null) {
   if (tabId != null) {
     delete sessionMemory.byTab[String(tabId)];
+    delete sessionMemory.pageSnapshotsByTab[String(tabId)];
     return { cleared: true, tabId: Number(tabId) };
   }
   sessionMemory.byTab = {};
+  sessionMemory.pageSnapshotsByTab = {};
   return { cleared: true, allTabs: true };
+}
+
+function getPageSnapshotMemory(tabId = null) {
+  if (tabId != null) {
+    return sessionMemory.pageSnapshotsByTab[String(tabId)] || null;
+  }
+  return sessionMemory.pageSnapshotsByTab;
+}
+
+function setPageSnapshotMemory(tabId, snapshot) {
+  if (tabId == null) return;
+  sessionMemory.pageSnapshotsByTab[String(tabId)] = snapshot;
+}
+
+function getFormProfiles() {
+  return formProfiles || {};
+}
+
+function setFormProfile(name, profile) {
+  const key = String(name || '').trim();
+  if (!key) throw new Error('name is required');
+  formProfiles[key] = profile;
+  return key;
+}
+
+function compactDownloadItem(item) {
+  return {
+    id: item.id,
+    url: item.url || '',
+    finalUrl: item.finalUrl || null,
+    filename: item.filename || '',
+    danger: item.danger || null,
+    mime: item.mime || item.mimeType || null,
+    state: item.state || null,
+    error: item.error || null,
+    bytesReceived: item.bytesReceived || 0,
+    totalBytes: item.totalBytes || 0,
+    startTime: item.startTime || null,
+    endTime: item.endTime || null,
+    byExtensionId: item.byExtensionId || null,
+    exists: item.exists !== false,
+  };
+}
+
+async function queryDownloadsSnapshot(filter = {}) {
+  const items = await chrome.downloads.search({
+    ...filter,
+  });
+  return items.map(compactDownloadItem);
+}
+
+async function waitForDownloadMatch(needle = '', options = {}) {
+  const target = String(needle || '').trim().toLowerCase();
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs || 20000));
+  const startedAt = Date.now();
+  let lastMatch = null;
+  while (Date.now() - startedAt < timeoutMs) {
+    const items = await queryDownloadsSnapshot(options.filter || {});
+    const matches = items.filter((item) => {
+      const hay = `${item.filename || ''} ${item.url || ''} ${item.finalUrl || ''}`.toLowerCase();
+      if (!target) return true;
+      return hay.includes(target);
+    });
+    if (matches.length) {
+      lastMatch = matches[0];
+      if (!options.waitForComplete) {
+        return {
+          ok: true,
+          elapsedMs: Date.now() - startedAt,
+          download: lastMatch,
+          matches,
+        };
+      }
+      const complete = matches.find((item) => item.state === 'complete') || null;
+      if (complete) {
+        return {
+          ok: true,
+          elapsedMs: Date.now() - startedAt,
+          download: complete,
+          matches,
+        };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.max(150, Number(options.pollMs || 500))));
+  }
+  throw new Error(`Timed out waiting for download: ${needle || 'any download'}`);
 }
 
 function debuggerTarget(tabId) {
@@ -3314,6 +3413,577 @@ async function handleCommand(command) {
           landmarks,
         };
       }, [], params.tabId ?? null);
+    case 'pageSummary':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const controls = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"]'))
+          .filter(visible)
+          .slice(0, Math.max(1, Number(options.maxItems || 14)));
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+          .filter(visible)
+          .slice(0, Math.max(1, Number(options.maxItems || 14)))
+          .map((el) => ({ level: el.tagName.toLowerCase(), text: norm(el.innerText || el.textContent || '').slice(0, 180) }))
+          .filter((item) => item.text);
+        const modals = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog, [aria-modal="true"], .modal, .dialog, .popover, .toast'))
+          .filter(visible)
+          .slice(0, 8)
+          .map((el) => norm(el.innerText || el.textContent || '').slice(0, 180))
+          .filter(Boolean);
+        const summary = [
+          `Title: ${document.title || '(untitled)'}`,
+          `URL: ${location.href}`,
+          `Headings: ${headings.length}`,
+          `Controls: ${controls.length}`,
+          `Forms: ${document.forms.length}`,
+          `Modals: ${modals.length}`,
+        ];
+        return {
+          title: document.title,
+          url: location.href,
+          summary,
+          summaryText: summary.join(' | '),
+          headings,
+          controls: controls.map((el) => ({
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || null,
+            role: el.getAttribute('role') || null,
+            text: norm(el.innerText || el.textContent || el.value || '').slice(0, 120),
+            placeholder: el.getAttribute('placeholder') || null,
+            name: el.getAttribute('name') || null,
+            id: el.id || null,
+          })),
+          modals,
+        };
+      }, [{ maxItems: params.maxItems || 14 }], params.tabId ?? null);
+    case 'pageSectionReader':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const sectionSelector = 'main, article, section, nav, aside, dialog, form, header, footer';
+        const sections = Array.from(document.querySelectorAll(sectionSelector))
+          .filter(visible)
+          .slice(0, Math.max(1, Number(options.maxItems || 20)))
+          .map((el, index) => {
+            const heading = Array.from(el.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+              .find((node) => visible(node));
+            const buttons = el.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]').length;
+            const inputs = el.querySelectorAll('input, select, textarea, [contenteditable="true"]').length;
+            const text = norm(el.innerText || el.textContent || '').slice(0, 320);
+            const rect = el.getBoundingClientRect();
+            return {
+              index,
+              kind: el.tagName.toLowerCase(),
+              heading: heading ? norm(heading.innerText || heading.textContent || '').slice(0, 140) : (el.getAttribute('aria-label') || el.getAttribute('title') || '').slice(0, 140),
+              selector: el.id ? `#${CSS.escape(el.id)}` : el.tagName.toLowerCase(),
+              text,
+              buttons,
+              inputs,
+              links: el.querySelectorAll('a[href]').length,
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          });
+        const byHeading = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+          .filter(visible)
+          .slice(0, Math.max(1, Number(options.maxItems || 20)))
+          .map((el) => ({
+            heading: norm(el.innerText || el.textContent || '').slice(0, 140),
+            level: el.tagName.toLowerCase(),
+            selector: el.id ? `#${CSS.escape(el.id)}` : el.tagName.toLowerCase(),
+          }))
+          .filter((item) => item.heading);
+        return {
+          title: document.title,
+          url: location.href,
+          sections,
+          headings: byHeading,
+        };
+      }, [{ maxItems: params.maxItems || 20 }], params.tabId ?? null);
+    case 'modalDetector':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const modalSelectors = [
+          '[role="dialog"]',
+          '[role="alertdialog"]',
+          'dialog',
+          '[aria-modal="true"]',
+          '.modal',
+          '.dialog',
+          '.popover',
+          '.toast',
+          '.dropdown-menu',
+          '.menu',
+          '.overlay',
+        ];
+        const modals = modalSelectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)).map((el) => {
+          if (!visible(el)) return null;
+          const rect = el.getBoundingClientRect();
+          const closeButtons = Array.from(el.querySelectorAll('button, [role="button"], [aria-label], [title]'))
+            .filter(visible)
+            .map((btn) => norm([
+              btn.innerText,
+              btn.textContent,
+              btn.getAttribute('aria-label'),
+              btn.getAttribute('title'),
+              btn.getAttribute('value'),
+            ].filter(Boolean).join(' ')))
+            .filter(Boolean)
+            .slice(0, 10);
+          return {
+            selector,
+            tag: el.tagName.toLowerCase(),
+            role: el.getAttribute('role') || null,
+            text: norm(el.innerText || el.textContent || '').slice(0, 240),
+            id: el.id || null,
+            className: typeof el.className === 'string' ? el.className.split(/\s+/).slice(0, 4).join(' ') : null,
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            closeButtons,
+          };
+        }).filter(Boolean)).slice(0, Math.max(1, Number(options.maxItems || 12)));
+        return {
+          title: document.title,
+          url: location.href,
+          count: modals.length,
+          modals,
+        };
+      }, [{ maxItems: params.maxItems || 12 }], params.tabId ?? null);
+    case 'repeatedElementMatcher':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const selectorMap = {
+          all: 'a[href], button, input, select, textarea, [contenteditable="true"], [role], li, article, section, div, span',
+          buttons: 'button, input[type="button"], input[type="submit"], [role="button"]',
+          links: 'a[href], [role="link"]',
+          inputs: 'input, select, textarea, [contenteditable="true"]',
+          text: 'li, article, section, div, span, p, td, th',
+        };
+        const kind = String(options.kind || 'all').toLowerCase();
+        const selector = selectorMap[kind] || selectorMap.all;
+        const elements = Array.from(document.querySelectorAll(selector))
+          .filter(visible)
+          .slice(0, Math.max(1, Number(options.maxItems || 500)));
+        const signatureFor = (el) => {
+          const text = norm([
+            el.innerText,
+            el.textContent,
+            el.value,
+            el.getAttribute('aria-label'),
+            el.getAttribute('placeholder'),
+            el.getAttribute('name'),
+            el.id,
+          ].filter(Boolean).join(' ')).toLowerCase();
+          return [
+            el.tagName.toLowerCase(),
+            el.getAttribute('role') || '',
+            el.getAttribute('type') || '',
+            text.slice(0, 100),
+          ].join('|');
+        };
+        const groups = new Map();
+        for (const el of elements) {
+          const signature = signatureFor(el);
+          if (!groups.has(signature)) {
+            groups.set(signature, []);
+          }
+          groups.get(signature).push(el);
+        }
+        const repeated = Array.from(groups.entries())
+          .filter(([, items]) => items.length > 1)
+          .map(([signature, items]) => {
+            const sample = items[0];
+            const rect = sample.getBoundingClientRect();
+            return {
+              signature,
+              count: items.length,
+              tag: sample.tagName.toLowerCase(),
+              role: sample.getAttribute('role') || null,
+              type: sample.getAttribute('type') || null,
+              sampleText: norm(sample.innerText || sample.textContent || sample.value || '').slice(0, 160),
+              sampleSelector: sample.id ? `#${CSS.escape(sample.id)}` : sample.tagName.toLowerCase(),
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+              items: items.slice(0, 10).map((el) => ({
+                selector: el.id ? `#${CSS.escape(el.id)}` : el.tagName.toLowerCase(),
+                text: norm(el.innerText || el.textContent || el.value || '').slice(0, 120),
+              })),
+            };
+          })
+          .sort((a, b) => b.count - a.count)
+          .slice(0, Math.max(1, Number(options.maxGroups || 20)));
+        return {
+          title: document.title,
+          url: location.href,
+          kind,
+          repeated,
+        };
+      }, [{ kind: params.kind || 'all', maxItems: params.maxItems || 500, maxGroups: params.maxGroups || 20 }], params.tabId ?? null);
+    case 'nextVisibleControl':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const controls = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"]'))
+          .filter(visible);
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const currentSelector = norm(options.selector || '');
+        const current = currentSelector ? document.querySelector(currentSelector) : document.activeElement;
+        let startIndex = current ? controls.indexOf(current) : -1;
+        if (startIndex < 0 && current?.form) {
+          startIndex = controls.findIndex((el) => el.form && el.form === current.form);
+        }
+        const wrap = options.wrap !== false;
+        const nextIndex = startIndex >= 0 ? startIndex + 1 : 0;
+        const chosen = controls[nextIndex] || (wrap ? controls[0] : null);
+        if (!chosen) {
+          return {
+            ok: false,
+            reason: 'No visible control found',
+            controls: controls.length,
+          };
+        }
+        const rect = chosen.getBoundingClientRect();
+        const result = {
+          ok: true,
+          index: controls.indexOf(chosen),
+          total: controls.length,
+          tag: chosen.tagName.toLowerCase(),
+          type: chosen.getAttribute('type') || null,
+          role: chosen.getAttribute('role') || null,
+          selector: selectorFor(chosen),
+          text: norm(chosen.innerText || chosen.textContent || chosen.value || '').slice(0, 180),
+          placeholder: chosen.getAttribute('placeholder') || null,
+          name: chosen.getAttribute('name') || null,
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+        if (options.focus !== false) {
+          chosen.focus();
+          chosen.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        }
+        if (options.click === true) {
+          chosen.click();
+          result.clicked = true;
+        }
+        return result;
+      }, [{ selector: params.selector || null, wrap: params.wrap !== false, focus: params.focus !== false, click: !!params.click }], params.tabId ?? null);
+    case 'semanticClick':
+      return await runAndRemember('semanticClick', (intent, selector) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const lower = (value) => norm(value).toLowerCase();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const query = selector || null;
+        const normalizeIntent = lower(intent);
+        const intentMap = [
+          { match: /(submit|send|save|continue|next|finish|apply|upload|відправ|надісл|зберегти|далі|продовж|увійти|register|sign up)/i, needles: ['submit', 'send', 'save', 'continue', 'next', 'finish', 'apply', 'upload', 'ok', 'continue', 'save changes', 'зберегти', 'далі', 'продовжити', 'увійти', 'зареєструватися'] },
+          { match: /(close|dismiss|cancel|back|закр|відміни|сховай|hide|x)/i, needles: ['close', 'dismiss', 'cancel', 'back', 'ok', 'done', 'закрити', 'скасувати', 'відмінити', 'x', '×'] },
+          { match: /(search|find|query|пошук)/i, needles: ['search', 'find', 'submit', 'ok', 'пошук'] },
+          { match: /(open first result|first result|open result)/i, needles: ['a[href]', 'button', 'result'] },
+          { match: /(login|sign in|log in|auth)/i, needles: ['login', 'sign in', 'sign in', 'увійти', 'login'] },
+        ];
+        const matchedRule = intentMap.find((rule) => rule.match.test(normalizeIntent)) || null;
+        const candidateSelectors = query ? [query] : [];
+        if (matchedRule?.needles?.includes('a[href]')) {
+          const firstLink = Array.from(document.querySelectorAll('a[href]')).find((el) => visible(el));
+          if (firstLink) candidateSelectors.unshift(firstLink.id ? `#${CSS.escape(firstLink.id)}` : 'a[href]');
+        }
+        const controlQuery = query || 'a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"]';
+        const candidates = Array.from(document.querySelectorAll(controlQuery)).filter(visible);
+        const scoreCandidate = (el) => {
+          const hay = lower([
+            el.innerText,
+            el.textContent,
+            el.value,
+            el.getAttribute('aria-label'),
+            el.getAttribute('placeholder'),
+            el.getAttribute('title'),
+            el.getAttribute('name'),
+            el.id,
+          ].filter(Boolean).join(' '));
+          let score = 0;
+          const needles = matchedRule?.needles || [normalizeIntent];
+          for (const needle of needles) {
+            const n = lower(needle);
+            if (!n) continue;
+            if (hay === n) score += 1000;
+            if (hay.startsWith(n)) score += 700;
+            if (hay.includes(n)) score += 500;
+          }
+          if (hay.includes('result') && /result/.test(normalizeIntent)) score += 120;
+          if (el.tagName === 'BUTTON') score += 30;
+          return score;
+        };
+        const ranked = candidates
+          .map((el) => ({ el, score: scoreCandidate(el) }))
+          .filter((item) => item.score >= 0)
+          .sort((a, b) => b.score - a.score);
+        let target = ranked[0]?.el || null;
+        if (!target && matchedRule?.match?.test(normalizeIntent) && normalizeIntent.includes('first result')) {
+          target = Array.from(document.querySelectorAll('a[href]')).find((el) => visible(el)) || null;
+        }
+        if (!target && selector) {
+          target = document.querySelector(selector);
+        }
+        if (!target) throw new Error(`No semantic click target found for: ${intent}`);
+        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        const rect = target.getBoundingClientRect();
+        target.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
+        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
+        target.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
+        target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
+        target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
+        if (typeof target.click === 'function') target.click();
+        return {
+          clicked: true,
+          intent,
+          selector: target.id ? `#${CSS.escape(target.id)}` : target.tagName.toLowerCase(),
+          tag: target.tagName.toLowerCase(),
+          text: norm(target.innerText || target.textContent || target.value || '').slice(0, 160),
+        };
+      }, [params.intent || params.text || '', params.selector || null], params.tabId ?? null, () => ({
+        intent: params.intent || params.text || '',
+        selector: params.selector || null,
+      }));
+    case 'pageDiffMemory':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const snapshot = {
+          title: document.title,
+          url: location.href,
+          headingTexts: Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(visible).slice(0, 20).map((el) => norm(el.innerText || el.textContent || '').slice(0, 120)),
+          controlSignatures: Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"]'))
+            .filter(visible)
+            .slice(0, 100)
+            .map((el) => [
+              el.tagName.toLowerCase(),
+              el.getAttribute('role') || '',
+              el.getAttribute('type') || '',
+              norm(el.innerText || el.textContent || el.value || '').slice(0, 80),
+              el.id || '',
+              el.getAttribute('name') || '',
+            ].join('|')),
+          modalSignatures: Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog, [aria-modal="true"], .modal, .dialog, .popover, .toast'))
+            .filter(visible)
+            .slice(0, 20)
+            .map((el) => norm(el.innerText || el.textContent || '').slice(0, 120)),
+          activeElement: document.activeElement ? {
+            tag: document.activeElement.tagName?.toLowerCase?.() || null,
+            type: document.activeElement.getAttribute?.('type') || null,
+            id: document.activeElement.id || null,
+            name: document.activeElement.getAttribute?.('name') || null,
+            placeholder: document.activeElement.getAttribute?.('placeholder') || null,
+            text: norm(document.activeElement.innerText || document.activeElement.textContent || document.activeElement.value || '').slice(0, 120),
+          } : null,
+        };
+        const snapshotKey = String(options.tabId);
+        const previous = sessionMemory.pageSnapshotsByTab[snapshotKey] || null;
+        const diffSignature = (listA, listB) => {
+          const a = new Set(listA || []);
+          const b = new Set(listB || []);
+          return {
+            added: Array.from(a).filter((item) => !b.has(item)).slice(0, 100),
+            removed: Array.from(b).filter((item) => !a.has(item)).slice(0, 100),
+          };
+        };
+        const diff = previous ? {
+          titleChanged: previous.title !== snapshot.title,
+          urlChanged: previous.url !== snapshot.url,
+          headingDiff: diffSignature(snapshot.headingTexts, previous.headingTexts),
+          controlDiff: diffSignature(snapshot.controlSignatures, previous.controlSignatures),
+          modalDiff: diffSignature(snapshot.modalSignatures, previous.modalSignatures),
+          activeElementChanged: JSON.stringify(previous.activeElement || null) !== JSON.stringify(snapshot.activeElement || null),
+          previousCounts: {
+            headings: previous.headingTexts?.length || 0,
+            controls: previous.controlSignatures?.length || 0,
+            modals: previous.modalSignatures?.length || 0,
+          },
+          currentCounts: {
+            headings: snapshot.headingTexts.length,
+            controls: snapshot.controlSignatures.length,
+            modals: snapshot.modalSignatures.length,
+          },
+        } : {
+          firstSnapshot: true,
+        };
+        sessionMemory.pageSnapshotsByTab[snapshotKey] = snapshot;
+        return {
+          title: document.title,
+          url: location.href,
+          previousExists: !!previous,
+          current: snapshot,
+          diff,
+        };
+      }, [{ tabId: await resolveTargetTabId(params.tabId ?? null) }], params.tabId ?? null);
+    case 'resolveDomRoute':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const lower = (value) => norm(value).toLowerCase();
+        const selector = norm(options.selector || '');
+        const needle = norm(options.needle || '');
+        const exact = !!options.exact;
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const candidateSelectors = [
+          selector,
+          needle ? null : null,
+        ].filter(Boolean);
+        let element = selector ? document.querySelector(selector) : null;
+        if (!element && needle) {
+          const targets = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"], summary, [role], div, span, p'))
+            .filter(visible);
+          const ranked = targets.map((el) => {
+            const hay = lower([
+              el.innerText,
+              el.textContent,
+              el.value,
+              el.getAttribute('aria-label'),
+              el.getAttribute('placeholder'),
+              el.getAttribute('title'),
+              el.getAttribute('name'),
+              el.id,
+            ].filter(Boolean).join(' '));
+            let score = 0;
+            const target = lower(needle);
+            if (exact) {
+              score = hay === target ? 1000 : -1;
+            } else {
+              if (hay === target) score += 1000;
+              if (hay.startsWith(target)) score += 700;
+              if (hay.includes(target)) score += 500;
+            }
+            return { el, score };
+          }).filter((item) => item.score >= 0).sort((a, b) => b.score - a.score);
+          element = ranked[0]?.el || null;
+        }
+        if (!element) throw new Error('Element not found');
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const ancestry = [];
+        let node = element;
+        while (node && node !== document.documentElement) {
+          ancestry.push({
+            tag: node.tagName?.toLowerCase?.() || node.nodeName?.toLowerCase?.() || null,
+            selector: node.nodeType === Node.ELEMENT_NODE ? selectorFor(node) : null,
+            id: node.id || null,
+            role: node.getAttribute?.('role') || null,
+            name: node.getAttribute?.('name') || null,
+          });
+          node = node.parentElement || (node.assignedSlot || null);
+        }
+        const framePath = [];
+        let owner = element.ownerDocument;
+        while (owner && owner.defaultView && owner.defaultView.frameElement) {
+          const frame = owner.defaultView.frameElement;
+          framePath.push({
+            selector: selectorFor(frame),
+            tag: frame.tagName.toLowerCase(),
+            id: frame.id || null,
+            name: frame.getAttribute('name') || null,
+            title: frame.getAttribute('title') || null,
+            src: frame.getAttribute('src') || null,
+          });
+          owner = frame.ownerDocument;
+        }
+        const shadowPath = [];
+        let root = element.getRootNode();
+        while (root && root.host) {
+          const host = root.host;
+          shadowPath.push({
+            selector: selectorFor(host),
+            tag: host.tagName.toLowerCase(),
+            id: host.id || null,
+            name: host.getAttribute('name') || null,
+            role: host.getAttribute('role') || null,
+          });
+          root = host.getRootNode();
+        }
+        const rect = element.getBoundingClientRect();
+        return {
+          title: document.title,
+          url: location.href,
+          selector: selectorFor(element),
+          route: {
+            framePath,
+            shadowPath,
+            ancestry: ancestry.slice(0, 40),
+          },
+          element: {
+            tag: element.tagName.toLowerCase(),
+            type: element.getAttribute('type') || null,
+            role: element.getAttribute('role') || null,
+            text: norm(element.innerText || element.textContent || element.value || '').slice(0, 180),
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          },
+        };
+      }, [{ selector: params.selector || null, needle: params.needle || null, exact: !!params.exact }], params.tabId ?? null);
     case 'pageDomOutline':
       return await executeInTab((options) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
@@ -4232,8 +4902,35 @@ async function handleCommand(command) {
         filename: params.filename || undefined,
         saveAs: params.saveAs !== false,
       });
+      downloadMemory.recent = [{
+        at: new Date().toISOString(),
+        id: downloadId,
+        url,
+        filename: params.filename || null,
+        saveAs: params.saveAs !== false,
+      }, ...downloadMemory.recent].slice(0, 40);
       return { ok: true, url, downloadId };
     }
+    case 'watchDownloads': {
+      const snapshot = await queryDownloadsSnapshot({});
+      const needle = String(params.needle || '').trim().toLowerCase();
+      const items = needle
+        ? snapshot.filter((item) => `${item.filename || ''} ${item.url || ''} ${item.finalUrl || ''}`.toLowerCase().includes(needle))
+        : snapshot;
+      return {
+        ok: true,
+        count: items.length,
+        recent: downloadMemory.recent,
+        downloads: items.slice(0, Math.max(1, params.maxItems || 20)),
+      };
+    }
+    case 'waitForDownload':
+      return await waitForDownloadMatch(params.needle || '', {
+        timeoutMs: params.timeoutMs || 20000,
+        pollMs: params.pollMs || 500,
+        waitForComplete: params.waitForComplete !== false,
+        filter: params.filter || {},
+      });
     case 'domActions':
       return await executeStructuredDomActions(params.actions || [], params.tabId ?? null);
     case 'startMacroRecording':
@@ -4255,6 +4952,56 @@ async function handleCommand(command) {
     }
     case 'getMacroState':
       return getMacroState();
+    case 'saveFormProfile': {
+      const name = String(params.name || '').trim();
+      if (!name) throw new Error('name is required');
+      const profile = {
+        fields: params.fields || {},
+        buttonText: params.buttonText || null,
+        buttonSelector: params.buttonSelector || null,
+        clickButton: !!params.clickButton,
+        confirmSubmit: !!params.confirmSubmit,
+        updatedAt: new Date().toISOString(),
+      };
+      setFormProfile(name, profile);
+      await persistFormProfiles();
+      return { ok: true, name, profile };
+    }
+    case 'listFormProfiles':
+      return {
+        profiles: Object.entries(getFormProfiles()).map(([name, profile]) => ({
+          name,
+          fieldCount: profile?.fields ? Object.keys(profile.fields).length : 0,
+          buttonText: profile?.buttonText || null,
+          buttonSelector: profile?.buttonSelector || null,
+          clickButton: !!profile?.clickButton,
+          confirmSubmit: !!profile?.confirmSubmit,
+          updatedAt: profile?.updatedAt || null,
+        })),
+      };
+    case 'deleteFormProfile': {
+      const name = String(params.name || '').trim();
+      if (!name) throw new Error('name is required');
+      delete formProfiles[name];
+      await persistFormProfiles();
+      return { ok: true, deleted: name };
+    }
+    case 'formProfileAutofill': {
+      const name = String(params.profileName || params.name || '').trim();
+      const saved = name ? (formProfiles[name] || null) : null;
+      const profile = params.profile || saved || {};
+      const fields = params.fields || profile.fields || {};
+      return await universalFormAssist({
+        fields,
+        entries: params.entries || null,
+        clickButton: params.clickButton ?? !!profile.clickButton,
+        confirmSubmit: params.confirmSubmit ?? !!profile.confirmSubmit,
+        buttonText: params.buttonText || profile.buttonText || null,
+        buttonSelector: params.buttonSelector || profile.buttonSelector || null,
+        exactButton: !!params.exactButton,
+        allowFallback: params.allowFallback === true,
+      }, params.tabId ?? null);
+    }
     case 'saveRecipe':
       if (!params.name) throw new Error('name is required');
       namedRecipes[String(params.name)] = params.actions || [];

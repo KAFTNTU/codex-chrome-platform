@@ -38,12 +38,22 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Read the page first with `extractText`, `extractHtml`, `pageOverview`, or `getElements`.
 - Use `pageDomSnapshot` when you need a deep DOM inventory with forms, controls, frames, and shadow hosts.
 - Use `pageDomOutline` when you want a compact DOM map instead of the full snapshot.
+- Use `pageSummary` when you want a short overview of the page without dumping the whole DOM.
+- Use `pageSectionReader` when you want the page split into logical sections.
 - Use `findDomControl` when you need a specific control by text, label, placeholder, name, id, or role.
 - Use `describeDomElement` when you need a detailed breakdown of one element, including its form context and geometry.
+- Use `modalDetector` when you want to know whether a dialog, popover, or toast is blocking the page.
+- Use `repeatedElementMatcher` when a page has many similar cards, rows, or buttons and you need the repeated groups.
+- Use `nextVisibleControl` when you want the next accessible control instead of a brittle selector.
+- Use `semanticClick` when you know the intent but not the exact selector.
+- Use `pageDiffMemory` when you want to compare what changed after an action.
+- Use `resolveDomRoute` when you need the ancestry, frame path, or shadow route for an element.
 - Use `screenshot` or `elementScreenshot` when layout matters.
 - Use `waitForText` / `waitForSelector` before clicking dynamic UI.
 - Use `smartFocus` to find the right field when the form is cluttered.
 - Use `universalFormAssist` when you want to fill several common fields quickly across different sites.
+- Use `watchDownloads` / `waitForDownload` when a file should appear in the browser download list.
+- Use form profiles when you want to save and replay the same browser form values repeatedly.
 - Use tab groups when you need several related pages open together.
 - Use the upload assistant only for user-owned completed files.
 - Use preflight before attach/submit when file integrity matters.

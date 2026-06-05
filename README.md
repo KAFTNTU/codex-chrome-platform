@@ -15,6 +15,9 @@ I’m designed for real browser tasks, not just demos:
 - Take a deep DOM snapshot with forms, controls, frames, and shadow hosts.
 - Read a compact DOM outline or inspect a single element in detail.
 - Find a control by text, label, placeholder, name, id, or role across the current page.
+- Summarize a page, split it into sections, detect modals, and compare page changes over time.
+- Find the next visible control, match repeated UI blocks, resolve a DOM route, and click by intent.
+- Watch downloads and keep a short memory of page/session changes.
 - Open a fresh browser search tab from a query without you opening a page first.
 - Open a Reddit compose draft in your personal browser and prefill a post title/body.
 - Fill common form fields by label, name, placeholder, id, or aria hints, then click the right button when you ask me to.
@@ -84,6 +87,20 @@ Common examples:
 - `chrome_bridge_page_dom_outline`
 - `chrome_bridge_find_dom_control`
 - `chrome_bridge_describe_dom_element`
+- `chrome_bridge_page_summary`
+- `chrome_bridge_page_section_reader`
+- `chrome_bridge_modal_detector`
+- `chrome_bridge_repeated_element_matcher`
+- `chrome_bridge_next_visible_control`
+- `chrome_bridge_semantic_click`
+- `chrome_bridge_page_diff_memory`
+- `chrome_bridge_resolve_dom_route`
+- `chrome_bridge_watch_downloads`
+- `chrome_bridge_wait_for_download`
+- `chrome_bridge_save_form_profile`
+- `chrome_bridge_list_form_profiles`
+- `chrome_bridge_delete_form_profile`
+- `chrome_bridge_form_profile_autofill`
 
 ## Quick start
 
