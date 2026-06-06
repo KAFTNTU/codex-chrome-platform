@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Bridge Companion",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "Companion extension for Codex Bridge.",
-  "permissions": ["tabs", "tabGroups", "nativeMessaging", "scripting", "storage", "activeTab", "offscreen", "clipboardWrite", "debugger", "cookies", "downloads", "alarms"],
+  "permissions": ["tabs", "tabGroups", "nativeMessaging", "scripting", "storage", "activeTab", "offscreen", "clipboardWrite", "debugger", "cookies", "downloads", "alarms", "management"],
   "host_permissions": ["<all_urls>", "http://127.0.0.1:17373/*", "http://localhost:17373/*"],
   "background": { "service_worker": "background.js" },
   "action": { "default_popup": "popup.html", "default_title": "Chrome Bridge" }

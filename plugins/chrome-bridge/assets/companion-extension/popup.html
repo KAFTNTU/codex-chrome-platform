@@ -21,7 +21,7 @@
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      width: 360px;
+      width: 540px;
       min-height: 620px;
       background: var(--bg);
       color: var(--text);
@@ -33,26 +33,18 @@
       display: grid;
       gap: 8px;
       max-height: 100vh;
-      overflow-y: scroll;
-      overflow-x: auto;
-      min-width: 420px;
-      scrollbar-gutter: stable;
+      overflow-y: auto;
+      overflow-x: hidden;
+      width: 100%;
+      min-width: 0;
       overscroll-behavior: contain;
     }
     .wrap::-webkit-scrollbar {
-      width: 10px;
+      width: 0;
+      height: 0;
     }
-    .wrap::-webkit-scrollbar-track {
-      background: #0f1318;
-      border-radius: 999px;
-    }
-    .wrap::-webkit-scrollbar-thumb {
-      background: #314050;
-      border-radius: 999px;
-      border: 2px solid #0f1318;
-    }
-    .wrap::-webkit-scrollbar-thumb:hover {
-      background: #486177;
+    .wrap {
+      scrollbar-width: none;
     }
     .card {
       background: var(--panel);
@@ -251,7 +243,7 @@
     }
     .modal-backdrop.open { display: flex; }
     .modal {
-      width: min(100%, 340px);
+      width: min(100%, 420px);
       max-height: calc(100vh - 24px);
       overflow: auto;
       background: #141922;
@@ -345,6 +337,14 @@
       justify-content: space-between;
       gap: 8px;
     }
+    .danger-action {
+      background: #4a1d20;
+      border-color: #8c3a40;
+      color: #ffe9ea;
+    }
+    .danger-action:hover {
+      background: #602428;
+    }
   </style>
 </head>
 <body>
@@ -428,6 +428,9 @@
       <div class="row">
         <div class="sub">Error</div>
         <code id="error"></code>
+      </div>
+      <div class="inline">
+        <button id="removeExtension" class="danger-action">Remove extension</button>
       </div>
     </div>
 

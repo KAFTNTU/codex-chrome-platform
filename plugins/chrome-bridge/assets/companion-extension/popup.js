@@ -376,6 +376,30 @@ async function clearMonitor() {
   await refresh();
 }
 
+async function removeExtension() {
+  const confirmRemoval = confirm('Remove Bridge Companion from the browser?');
+  if (!confirmRemoval) return;
+  try {
+    await new Promise((resolve, reject) => {
+      if (!chrome.management?.uninstallSelf) {
+        reject(new Error('Extension removal is not available in this browser.'));
+        return;
+      }
+      chrome.management.uninstallSelf({ showConfirmDialog: true }, () => {
+        const lastError = chrome.runtime.lastError;
+        if (lastError) {
+          reject(new Error(lastError.message || String(lastError)));
+          return;
+        }
+        resolve();
+      });
+    });
+    showNotice('Removal request sent');
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+  }
+}
+
 el('save').addEventListener('click', saveServerUrl);
 el('saveAssistant').addEventListener('click', saveAssistantSettings);
 el('sendAssistantTask').addEventListener('click', runAssistantTask);
@@ -397,6 +421,7 @@ el('mouseCueEnabled').addEventListener('change', saveMouseCueEnabled);
 el('attachMonitor').addEventListener('click', attachMonitor);
 el('detachMonitor').addEventListener('click', detachMonitor);
 el('clearMonitor').addEventListener('click', clearMonitor);
+el('removeExtension').addEventListener('click', removeExtension);
 
 for (const id of ['serverUrl', 'assistantApiEndpoint', 'assistantModel', 'assistantApiKey', 'assistantTask', 'rememberApiKey']) {
   el(id).addEventListener('input', () => queueSaveAssistantSettings());
