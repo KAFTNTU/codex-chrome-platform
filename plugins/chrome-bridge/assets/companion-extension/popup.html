@@ -356,9 +356,9 @@
       border: 1px solid #273241;
       background: linear-gradient(180deg, #161d27 0%, #121821 100%);
       border-radius: 18px;
-      padding: 8px 10px 9px;
+      padding: 6px 10px;
       display: grid;
-      gap: 6px;
+      gap: 4px;
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
     .composer.dragover {
@@ -456,37 +456,31 @@
       gap: 8px;
     }
     .icon-button {
-      width: 32px;
-      height: 32px;
+      width: 30px;
+      height: 30px;
       border-radius: 999px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       padding: 0;
-      font-size: 16px;
+      font-size: 15px;
       flex: 0 0 auto;
     }
     .send-button {
-      width: 32px;
-      height: 32px;
+      width: 30px;
+      height: 30px;
       border-radius: 999px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       padding: 0;
-      font-size: 14px;
+      font-size: 13px;
       flex: 0 0 auto;
     }
     .composer-main {
       flex: 1 1 auto;
       min-width: 0;
-      display: grid;
-      gap: 2px;
-    }
-    .composer-hint {
-      font-size: 9px;
-      color: var(--muted);
-      opacity: 0.82;
+      display: block;
     }
     .danger-action {
       background: #4a1d20;
@@ -513,7 +507,6 @@
           <button id="addFilesToChat" class="icon-button" title="Attach">+</button>
           <div class="composer-main">
             <textarea id="assistantTask" placeholder="Напишіть повідомлення або вставте файл"></textarea>
-            <div class="composer-hint">`Ctrl+V` для файлів або перетягни файл у це поле.</div>
           </div>
           <button id="sendAssistantTask" class="primary send-button" title="Send">↑</button>
         </div>
