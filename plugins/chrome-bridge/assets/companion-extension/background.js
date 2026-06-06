@@ -201,6 +201,7 @@ function buildAssistantSystemPrompt(context) {
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
     'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
+    'For section-scoped tools, use params named sectionNeedle and controlNeedle. Avoid old names like sectionSelector or controlSelector when you generate new actions.',
     'Before searching the web, use the current page context, pageSummary, pageDomOutline, pageDomSnapshot, pageInteractMap, pageTestDigest, pageDigest, site memory, and your own knowledge. Do not leave the current page to search for information unless the user explicitly asks you to search the web or the answer truly requires external lookup.',
     'When browser actions are needed, return ONLY valid JSON with this shape: {"assistant_text":"...","actions":[{"action":"...","params":{}}],"done":false}. Do not add markdown, code fences, or extra prose around the JSON.',
     'The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, moveCursor, waitForPageReady, and scroll or smoothScroll.',
@@ -4574,8 +4575,8 @@ async function handleCommand(command) {
           reason: `Unsupported section mode: ${payload.mode || payload.commandName || 'unknown'}`,
         };
       }, [{
-        sectionNeedle: params.sectionNeedle || params.section_needle || params.needle || params.section || params.heading || null,
-        controlNeedle: params.controlNeedle || params.control_needle || params.control || null,
+        sectionNeedle: params.sectionNeedle || params.section_needle || params.sectionSelector || params.section_selector || params.needle || params.section || params.heading || null,
+        controlNeedle: params.controlNeedle || params.control_needle || params.controlSelector || params.control_selector || params.control || null,
         controlIndex: params.controlIndex ?? params.control_index ?? null,
         index: params.index ?? null,
         exact: !!params.exact,
@@ -6813,6 +6814,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 && previousActionFingerprint
                 && currentActionFingerprint === previousActionFingerprint;
               const unchangedPage = currentPageFingerprint === previousPageFingerprint;
+              const sectionScopedFailure = stepResults.some((entry) => {
+                const actionName = normalizeCommandAction(entry?.action || '');
+                return (
+                  (actionName === 'clickWithinSection' || actionName === 'scopeToSection' || actionName === 'listSectionControls' || actionName === 'describeSection' || actionName === 'fillWithinSection')
+                  && entry?.result?.ok === false
+                );
+              });
               if (repeatedAction && unchangedPage && parsedPlan.done !== true) {
                 lastExecutionSummary = [
                   lastExecutionSummary,
@@ -6841,6 +6849,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                   buildAssistantLiveContextSnippet(browserContext),
                   repeatedAction && unchangedPage
                     ? 'Important: you just repeated the same action without changing the page. Do not repeat that action again. Read the fresh page state and choose a different next step or finish.'
+                    : '',
+                  sectionScopedFailure
+                    ? 'Important: a section-scoped action failed. Retry with section-scoped tools only. Use explicit sectionNeedle and controlNeedle, and do not fall back to pageInteractClick or semanticClick across the whole page until the section is resolved.'
                     : '',
                 ].filter(Boolean).join('\n\n'),
               });
