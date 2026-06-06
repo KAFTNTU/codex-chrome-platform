@@ -299,21 +299,60 @@ function stripAssistantJsonFence(text) {
   return value;
 }
 
+function extractJsonObjectCandidates(text) {
+  const raw = String(text || '');
+  const candidates = [];
+  for (let start = 0; start < raw.length; start += 1) {
+    if (raw[start] !== '{') continue;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < raw.length; index += 1) {
+      const char = raw[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (char === '"') {
+        inString = true;
+        continue;
+      }
+      if (char === '{') depth += 1;
+      if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          candidates.push({
+            prefix: raw.slice(0, start).trim(),
+            json: raw.slice(start, index + 1).trim(),
+          });
+          break;
+        }
+      }
+    }
+  }
+  return candidates;
+}
+
 function parseAssistantPlan(text) {
   const raw = String(text || '').trim();
   if (!raw) return null;
-  const candidates = [raw];
+  const candidates = [{ prefix: '', json: raw }];
   const fenced = stripAssistantJsonFence(raw);
-  if (fenced && fenced !== raw) candidates.push(fenced);
-  const firstBrace = raw.indexOf('{');
-  const lastBrace = raw.lastIndexOf('}');
-  if (firstBrace >= 0 && lastBrace > firstBrace) {
-    candidates.push(raw.slice(firstBrace, lastBrace + 1));
-  }
+  if (fenced && fenced !== raw) candidates.push({ prefix: '', json: fenced });
+  candidates.push(...extractJsonObjectCandidates(raw));
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(candidate);
+      const parsed = JSON.parse(candidate.json);
       if (parsed && typeof parsed === 'object') {
+        if (candidate.prefix && !parsed.assistant_text && !parsed.reply && !parsed.text) {
+          parsed.assistant_text = candidate.prefix;
+        }
         return parsed;
       }
     } catch {
@@ -508,7 +547,11 @@ function summarizeAssistantActions(results = []) {
     const action = entry?.action || 'action';
     const ok = entry?.result?.ok !== false;
     const stateText = ok ? 'ok' : 'error';
-    const detail = entry?.result?.error || entry?.result?.message || entry?.result?.status || '';
+    const detail = entry?.result?.error
+      || entry?.result?.message
+      || entry?.result?.reason
+      || entry?.result?.status
+      || '';
     return `${index + 1}. ${action}: ${stateText}${detail ? ` (${detail})` : ''}`;
   }).join('\n');
 }
@@ -4580,7 +4623,8 @@ async function handleCommand(command) {
           if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
           return el.tagName.toLowerCase();
         };
-        const query = norm(payload.selector || '');
+        const elementId = norm(payload.elementId || payload.element_id || payload.id || '');
+        const query = norm(payload.selector || (elementId ? `#${elementId}` : ''));
         const needle = lower(payload.needle || payload.intent || '');
         const index = Number.isFinite(Number(payload.index)) ? Number(payload.index) : null;
         const kind = String(payload.kind || 'all').toLowerCase();
@@ -4654,12 +4698,13 @@ async function handleCommand(command) {
           height: Math.round(rect.height),
         };
       }, [{
-        selector: params.selector || null,
+        selector: params.selector || (params.elementId ? `#${params.elementId}` : params.element_id ? `#${params.element_id}` : params.id ? `#${params.id}` : null),
         needle: params.needle || params.intent || null,
         intent: params.intent || null,
         index: params.index != null ? Number(params.index) : null,
         kind: params.kind || 'all',
         exact: !!params.exact,
+        elementId: params.elementId || params.element_id || params.id || null,
       }], params.tabId ?? null);
     case 'semanticClick':
       return await runAndRemember('semanticClick', (intent, selector) => {
