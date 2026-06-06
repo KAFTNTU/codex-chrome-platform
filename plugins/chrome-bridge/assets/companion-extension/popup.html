@@ -99,17 +99,20 @@
     }
     textarea {
       width: 100%;
-      min-height: 24px;
-      max-height: 96px;
+      min-height: 22px;
+      height: 22px;
+      max-height: 72px;
       resize: none;
       border-radius: 12px;
       border: 0;
       background: transparent;
       color: var(--text);
-      padding: 4px 0;
+      padding: 2px 0;
+      margin: 0;
       font: inherit;
       outline: none;
       line-height: 1.25;
+      display: block;
     }
     code {
       display: block;
@@ -370,6 +373,9 @@
       gap: 6px;
       flex-wrap: wrap;
     }
+    .attachment-tray:empty {
+      display: none;
+    }
     .file-list {
       display: grid;
       gap: 6px;
@@ -454,6 +460,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      min-height: 30px;
     }
     .icon-button {
       width: 30px;
@@ -480,7 +487,8 @@
     .composer-main {
       flex: 1 1 auto;
       min-width: 0;
-      display: block;
+      display: flex;
+      align-items: center;
     }
     .danger-action {
       background: #4a1d20;
