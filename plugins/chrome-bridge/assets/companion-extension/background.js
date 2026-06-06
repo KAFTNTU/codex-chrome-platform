@@ -192,6 +192,7 @@ function buildAssistantSystemPrompt(context) {
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
+    'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
     `Page summary: ${pageSummaryText}`,
@@ -538,6 +539,42 @@ async function collectAssistantPageContext() {
             }).filter(Boolean);
             return `${label || select.id || select.name || 'select'} => ${options.join(' | ')}`;
           });
+        const tableSummaries = Array.from(document.querySelectorAll('table'))
+          .filter(visible)
+          .slice(0, 12)
+          .map((table, index) => {
+            const caption = norm(table.querySelector('caption')?.innerText || table.querySelector('caption')?.textContent || '');
+            const headers = Array.from(table.querySelectorAll('thead th, tr th'))
+              .map((th) => norm(th.innerText || th.textContent || '').slice(0, 90))
+              .filter(Boolean)
+              .slice(0, 8);
+            const firstRow = Array.from(table.querySelectorAll('tbody tr, tr'))
+              .find((row) => visible(row));
+            const cells = firstRow ? Array.from(firstRow.querySelectorAll('th, td'))
+              .map((cell) => norm(cell.innerText || cell.textContent || '').slice(0, 90))
+              .filter(Boolean)
+              .slice(0, 8) : [];
+            return `${index}: ${caption || table.id || table.className || 'table'}${headers.length ? ` [${headers.join(' | ')}]` : ''}${cells.length ? ` => ${cells.join(' | ')}` : ''}`;
+          });
+        const listSummaries = Array.from(document.querySelectorAll('ul, ol, dl, menu'))
+          .filter(visible)
+          .slice(0, 12)
+          .map((list, index) => {
+            const items = Array.from(list.querySelectorAll('li, dt, dd'))
+              .filter(visible)
+              .slice(0, 6)
+              .map((node) => norm(node.innerText || node.textContent || '').slice(0, 90))
+              .filter(Boolean);
+            return `${index}: ${list.tagName.toLowerCase()} ${items.join(' | ')}`;
+          });
+        const formFields = Array.from(document.querySelectorAll('input, select, textarea'))
+          .filter(visible)
+          .slice(0, 40)
+          .map((field, index) => {
+            const tag = field.tagName.toLowerCase();
+            const type = field.getAttribute('type') || '';
+            return `${index}: ${tag}${type ? `:${type}` : ''}${labelTextFor(field) ? ` => ${labelTextFor(field)}` : ''}${field.getAttribute('placeholder') ? ` [${field.getAttribute('placeholder')}]` : ''}`;
+          });
         return {
           title: document.title || '',
           url: location.href,
@@ -545,11 +582,17 @@ async function collectAssistantPageContext() {
           controls,
           radioGroups,
           selectOptions,
+          tableSummaries,
+          listSummaries,
+          formFields,
           summaryText: [
             `Questions: ${questionTexts.slice(0, 5).join(' || ') || '(none)'}`,
             `Controls: ${controls.slice(0, 10).join(' || ') || '(none)'}`,
             `Radio groups: ${radioGroups.slice(0, 10).join(' || ') || '(none)'}`,
             `Selects: ${selectOptions.slice(0, 5).join(' || ') || '(none)'}`,
+            `Tables: ${tableSummaries.slice(0, 5).join(' || ') || '(none)'}`,
+            `Lists: ${listSummaries.slice(0, 5).join(' || ') || '(none)'}`,
+            `Fields: ${formFields.slice(0, 10).join(' || ') || '(none)'}`,
           ].join(' | '),
         };
       }, [], active.id);
@@ -4811,6 +4854,142 @@ async function handleCommand(command) {
               height: Math.round(rect.height),
             };
           });
+        const selectEntries = queryAllDeep('select')
+          .filter((el) => includeHidden || visible(el))
+          .slice(0, maxItems)
+          .map((select) => {
+            const rect = select.getBoundingClientRect();
+            const options = Array.from(select.options || []).slice(0, 20).map((opt, index) => ({
+              index,
+              text: norm(opt.textContent || opt.label || '').slice(0, 180),
+              value: String(opt.value || '').slice(0, 120),
+              selected: !!opt.selected,
+              disabled: !!opt.disabled,
+            })).filter((opt) => opt.text || opt.value);
+            return {
+              tag: 'select',
+              selector: selectorFor(select),
+              id: select.id || null,
+              name: select.getAttribute('name') || null,
+              label: labelTextFor(select).slice(0, 220),
+              hint: controlHint(select).slice(0, 220),
+              visible: visible(select),
+              multiple: !!select.multiple,
+              size: Number(select.size || 0) || null,
+              optionCount: select.options?.length || 0,
+              options,
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          });
+        const radioGroupsMap = new Map();
+        const checkboxGroupsMap = new Map();
+        for (const input of queryAllDeep('input[type="radio"], input[type="checkbox"]')) {
+          if (!(includeHidden || visible(input))) continue;
+          const type = String(input.getAttribute('type') || '').toLowerCase();
+          const map = type === 'radio' ? radioGroupsMap : checkboxGroupsMap;
+          const key = input.getAttribute('name') || input.id || labelTextFor(input) || `${input.tagName.toLowerCase()}-${map.size}`;
+          if (!map.has(key)) {
+            map.set(key, {
+              key,
+              type,
+              name: input.getAttribute('name') || null,
+              label: labelTextFor(input).slice(0, 220),
+              items: [],
+            });
+          }
+          const rect = input.getBoundingClientRect();
+          map.get(key).items.push({
+            selector: selectorFor(input),
+            id: input.id || null,
+            name: input.getAttribute('name') || null,
+            value: String(input.value || '').slice(0, 120),
+            checked: !!input.checked,
+            disabled: !!input.disabled,
+            label: labelTextFor(input).slice(0, 220),
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          });
+        }
+        const radioGroups = Array.from(radioGroupsMap.values()).slice(0, maxItems);
+        const checkboxGroups = Array.from(checkboxGroupsMap.values()).slice(0, maxItems);
+        const tableEntries = queryAllDeep('table')
+          .filter((el) => includeHidden || visible(el))
+          .slice(0, maxItems)
+          .map((table, index) => {
+            const rect = table.getBoundingClientRect();
+            const caption = norm(table.querySelector('caption')?.innerText || table.querySelector('caption')?.textContent || '').slice(0, 180);
+            const headers = Array.from(table.querySelectorAll('thead th, tr th'))
+              .map((th) => norm(th.innerText || th.textContent || '').slice(0, 120))
+              .filter(Boolean)
+              .slice(0, 20);
+            const rows = Array.from(table.querySelectorAll('tbody tr, tr'))
+              .filter((tr) => visible(tr))
+              .slice(0, 8)
+              .map((tr) => Array.from(tr.querySelectorAll('th, td'))
+                .map((cell) => norm(cell.innerText || cell.textContent || '').slice(0, 80))
+                .filter(Boolean)
+                .slice(0, 8));
+            return {
+              index,
+              selector: selectorFor(table),
+              id: table.id || null,
+              name: table.getAttribute('name') || null,
+              caption,
+              headers,
+              rowCount: table.querySelectorAll('tr').length,
+              visibleRows: rows.length,
+              rows,
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          });
+        const listEntries = queryAllDeep('ul, ol, dl, menu')
+          .filter((el) => includeHidden || visible(el))
+          .slice(0, maxItems)
+          .map((list, index) => {
+            const rect = list.getBoundingClientRect();
+            const items = Array.from(list.querySelectorAll('li, dt, dd, option'))
+              .filter((node) => includeHidden || visible(node))
+              .slice(0, 12)
+              .map((node) => norm(node.innerText || node.textContent || '').slice(0, 120))
+              .filter(Boolean);
+            return {
+              index,
+              selector: selectorFor(list),
+              tag: list.tagName.toLowerCase(),
+              id: list.id || null,
+              name: list.getAttribute('name') || null,
+              itemCount: list.querySelectorAll('li, dt, dd, option').length,
+              items,
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          });
+        const textBlocks = queryAllDeep('p, label, li, figcaption, caption, th, td, blockquote, code, pre, summary, legend')
+          .filter((el) => includeHidden || visible(el))
+          .slice(0, maxItems * 2)
+          .map((el) => {
+            const rect = el.getBoundingClientRect();
+            return {
+              tag: el.tagName.toLowerCase(),
+              role: el.getAttribute('role') || null,
+              selector: selectorFor(el),
+              text: norm(el.innerText || el.textContent || '').slice(0, 200),
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+            };
+          }).filter((item) => item.text);
         const formEntries = Array.from(document.forms).slice(0, maxItems).map((form, index) => {
           const fields = Array.from(form.elements || []).slice(0, 80).map((field) => {
             const rect = field.getBoundingClientRect?.() || { left: 0, top: 0, width: 0, height: 0 };
@@ -4961,12 +5140,18 @@ async function handleCommand(command) {
               text: norm(el.innerText || el.textContent || '').slice(0, 120),
             })))
             .slice(0, maxItems),
-          controls: controlEntries,
-          forms: formEntries,
-          frames: frameEntries,
-          shadowHosts,
-          scrollContainers,
-        };
+            controls: controlEntries,
+            selects: selectEntries,
+            radioGroups,
+            checkboxGroups,
+            tables: tableEntries,
+            lists: listEntries,
+            textBlocks,
+            forms: formEntries,
+            frames: frameEntries,
+            shadowHosts,
+            scrollContainers,
+          };
       }, [{
         maxItems: params.maxItems || 120,
         includeHidden: !!params.includeHidden,
