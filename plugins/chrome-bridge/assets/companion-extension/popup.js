@@ -240,6 +240,17 @@ function renderFileEntry(item, destination) {
   `;
 }
 
+function renderDraftAttachmentChip(item) {
+  return `
+    <span class="file-pill">
+      <span class="file-pill-name">${esc(item.name || 'attachment')}</span>
+      <small>${esc(formatBytes(item.size))}</small>
+      <button data-file-archive="${esc(item.id)}" title="Archive">A</button>
+      <button data-file-remove="${esc(item.id)}" title="Remove">x</button>
+    </span>
+  `;
+}
+
 function renderStatus(bridgeState) {
   const connected = !!bridgeState?.connected;
   el('statusPill').textContent = connected ? 'Connected' : 'Disconnected';
@@ -272,7 +283,7 @@ function renderAssistantChat(chatLog) {
       ? `
         <div class="file-pills">
           ${item.attachments.map((file) => `
-            <span class="file-pill">📎 ${esc(file.name || 'attachment')} <small>${esc(formatBytes(file.size))}</small></span>
+            <span class="file-pill">[file] <span class="file-pill-name">${esc(file.name || 'attachment')}</span> <small>${esc(formatBytes(file.size))}</small></span>
           `).join('')}
         </div>
       `
@@ -304,9 +315,9 @@ function renderAssistantFiles() {
   el('archiveFileCount').textContent = String(archive.length);
 
   if (!draft.length) {
-    draftList.innerHTML = '<div class="empty">No files attached to the current chat draft.</div>';
+    draftList.innerHTML = '';
   } else {
-    draftList.innerHTML = draft.map((item) => renderFileEntry(item, 'draft')).join('');
+    draftList.innerHTML = `<div class="file-pills">${draft.map((item) => renderDraftAttachmentChip(item)).join('')}</div>`;
   }
 
   if (!archive.length) {
@@ -366,6 +377,13 @@ async function copyArchiveFileToDraft(id) {
   renderAssistantFiles();
 }
 
+async function archiveDraftFile(id) {
+  const item = assistantDraftAttachments.find((entry) => entry.id === id);
+  if (!item) return;
+  await syncAssistantFiles('archive', [{ ...item, source: 'archive' }]);
+  await removeAssistantFile('draft', id);
+}
+
 async function clearAssistantFiles(destination) {
   const response = await chrome.runtime.sendMessage({
     type: 'popup-clear-assistant-files',
@@ -374,6 +392,15 @@ async function clearAssistantFiles(destination) {
   if (response?.assistantDraftAttachments) assistantDraftAttachments = response.assistantDraftAttachments;
   if (response?.assistantArchiveAttachments) assistantArchiveAttachments = response.assistantArchiveAttachments;
   renderAssistantFiles();
+}
+
+async function attachFilesToDraft(files) {
+  if (!files.length) return;
+  const attachments = [];
+  for (const file of files) {
+    attachments.push(await fileToAttachment(file, 'draft'));
+  }
+  await syncAssistantFiles('draft', attachments);
 }
 
 function renderConnectionDetailsVisibility() {
@@ -570,7 +597,9 @@ async function saveAssistantSettings() {
 }
 
 async function runAssistantTask() {
-  const taskText = el('assistantTask').value.trim();
+  const taskText = el('assistantTask').value.trim() || (
+    assistantDraftAttachments.length ? 'Проаналізуй прикріплені файли і дай відповідь по них.' : ''
+  );
   if (!taskText) return;
   if (saveTimer) {
     clearTimeout(saveTimer);
@@ -599,6 +628,9 @@ async function runAssistantTask() {
       assistantTask: '',
       assistantRememberApiKey: !!el('rememberApiKey').checked,
     });
+    if (assistantDraftAttachments.length) {
+      await clearAssistantFiles('draft');
+    }
   } catch (error) {
     showNotice(error.message || String(error), true);
     return;
@@ -697,19 +729,9 @@ async function clearMonitor() {
 el('save').addEventListener('click', saveServerUrl);
 el('saveAssistant').addEventListener('click', saveAssistantSettings);
 el('sendAssistantTask').addEventListener('click', runAssistantTask);
-el('clearAssistantTask').addEventListener('click', clearAssistantTask);
 el('clearAssistantChat').addEventListener('click', clearAssistantChat);
 el('addFilesToChat').addEventListener('click', () => {
   void pickFiles('draft');
-});
-el('addFilesToArchive').addEventListener('click', () => {
-  void pickFiles('archive');
-});
-el('clearDraftFiles').addEventListener('click', () => {
-  void clearAssistantFiles('draft');
-});
-el('clearArchiveFiles').addEventListener('click', () => {
-  void clearAssistantFiles('archive');
 });
 el('statusPill').addEventListener('click', () => {
   connectionDetailsVisible = !connectionDetailsVisible;
@@ -746,8 +768,11 @@ el('assistantFileInput').addEventListener('change', () => {
 
 el('assistantDraftFiles').addEventListener('click', (event) => {
   const removeId = event.target?.closest?.('[data-file-remove]')?.dataset?.fileRemove;
+  const archiveId = event.target?.closest?.('[data-file-archive]')?.dataset?.fileArchive;
   if (removeId) {
     void removeAssistantFile('draft', removeId);
+  } else if (archiveId) {
+    void archiveDraftFile(archiveId);
   }
 });
 
@@ -765,24 +790,31 @@ el('assistantChatList')?.addEventListener('wheel', (event) => {
   event.stopPropagation();
 }, { passive: true });
 
-el('assistantDropzone')?.addEventListener('dragover', (event) => {
+el('assistantComposer')?.addEventListener('dragover', (event) => {
   event.preventDefault();
-  el('assistantDropzone').classList.add('dragover');
+  el('assistantComposer').classList.add('dragover');
 });
-el('assistantDropzone')?.addEventListener('dragleave', () => {
-  el('assistantDropzone').classList.remove('dragover');
+el('assistantComposer')?.addEventListener('dragleave', () => {
+  el('assistantComposer').classList.remove('dragover');
 });
-el('assistantDropzone')?.addEventListener('drop', async (event) => {
+el('assistantComposer')?.addEventListener('drop', async (event) => {
   event.preventDefault();
-  el('assistantDropzone').classList.remove('dragover');
+  el('assistantComposer').classList.remove('dragover');
   const files = Array.from(event.dataTransfer?.files || []);
   if (!files.length) return;
   try {
-    const attachments = [];
-    for (const file of files) {
-      attachments.push(await fileToAttachment(file, 'draft'));
-    }
-    await syncAssistantFiles('draft', attachments);
+    await attachFilesToDraft(files);
+  } catch (error) {
+    showNotice(error.message || String(error), true);
+  }
+});
+
+el('assistantTask').addEventListener('paste', async (event) => {
+  const files = Array.from(event.clipboardData?.files || []);
+  if (!files.length) return;
+  event.preventDefault();
+  try {
+    await attachFilesToDraft(files);
   } catch (error) {
     showNotice(error.message || String(error), true);
   }
