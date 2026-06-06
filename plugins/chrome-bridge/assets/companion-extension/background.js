@@ -580,10 +580,29 @@ function summarizeAssistantActions(results = []) {
   }).join('\n');
 }
 
-async function runAssistantActionPlan(actions = [], tabId = null) {
+async function runAssistantActionPlan(actions = [], tabId = null, completedActionFingerprints = null) {
   const results = [];
   for (const step of actions.slice(0, 12)) {
     try {
+      const normalizedAction = normalizeCommandAction(step?.action || '');
+      const actionFingerprint = JSON.stringify({
+        action: normalizedAction,
+        params: {
+          ...(step.params || {}),
+          tabId: undefined,
+        },
+      });
+      if (completedActionFingerprints?.has(actionFingerprint)) {
+        results.push({
+          action: step.action,
+          result: {
+            ok: false,
+            blocked: true,
+            reason: 'This exact action was already confirmed. Move to the next section/control instead of repeating it.',
+          },
+        });
+        continue;
+      }
       const result = await handleCommand({
         action: step.action,
         params: {
@@ -592,6 +611,14 @@ async function runAssistantActionPlan(actions = [], tabId = null) {
         },
       });
       results.push({ action: step.action, result });
+      if (
+        completedActionFingerprints
+        && normalizedAction === 'clickWithinSection'
+        && result?.ok !== false
+        && result?.verification?.sectionSelection
+      ) {
+        completedActionFingerprints.add(actionFingerprint);
+      }
     } catch (error) {
       results.push({
         action: step.action,
@@ -4647,8 +4674,22 @@ async function handleCommand(command) {
         const sectionScopes = sectionMatch.scopes?.length ? sectionMatch.scopes : [sectionEl];
         const primarySectionEl = sectionMatch.primaryScope || sectionEl;
         const sectionControls = sectionMatch.controls.slice(0, maxItems);
-        const getSectionSelectionState = () => {
-          const radios = sectionScopes.flatMap((scope) => Array.from(scope.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]')))
+        const getSectionSelectionState = (clickedElement = null) => {
+          const clickedToggle = resolveToggleTarget(clickedElement);
+          const clickedName = clickedToggle?.getAttribute?.('name') || '';
+          const clickedGroup = clickedToggle?.closest?.('[role="radiogroup"], [role="group"], ul, ol, fieldset') || null;
+          let radios = [];
+          if (clickedName) {
+            radios = sectionScopes.flatMap((scope) => Array.from(scope.querySelectorAll(`input[name="${CSS.escape(clickedName)}"]`)));
+            if (!radios.length && clickedGroup) {
+              radios = Array.from(clickedGroup.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]'));
+            }
+          } else if (clickedGroup) {
+            radios = Array.from(clickedGroup.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]'));
+          } else {
+            radios = sectionScopes.flatMap((scope) => Array.from(scope.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]')));
+          }
+          radios = radios
             .filter((el, idx, list) => list.indexOf(el) === idx);
           const selected = radios.find((el) => {
             if ('checked' in el) return !!el.checked;
@@ -4715,6 +4756,24 @@ async function handleCommand(command) {
           const controlNeedleCanonical = canonical(controlNeedle);
           const sectionNeedleCanonical = canonical(sectionNeedleForClick);
           const controlIndex = Number.isFinite(Number(payload.controlIndex ?? payload.index)) ? Number(payload.controlIndex ?? payload.index) : null;
+          const pageLooksLikeTestForSectionClick = () => /test|quiz|exam|attempt|пройти тест|тест|іспит|екзамен|контроль/i.test([
+            document.title,
+            location.href,
+            norm(document.body?.innerText || '').slice(0, 4000),
+          ].join(' '));
+          const finalizeNeedle = [sectionNeedleForClick, controlNeedle].filter(Boolean).join(' ');
+          if (
+            pageLooksLikeTestForSectionClick()
+            && /(submit|send|finish|final|complete|turn in|відправ|надісл|заверш|закінч|здати|зберегти відповід|пройти тест|завершити тест)/i.test(finalizeNeedle)
+          ) {
+            return {
+              ok: false,
+              blocked: true,
+              reason: 'Blocked finalize/submit click on a test-like page.',
+              section: sectionSummary.section,
+              controls: sectionSummary.controls,
+            };
+          }
           if (!sectionNeedleForClick) {
             return {
               ok: false,
@@ -4767,7 +4826,7 @@ async function handleCommand(command) {
             };
           }
           const clickResult = clickWithVerification(chosen);
-          const selectionState = getSectionSelectionState();
+          const selectionState = getSectionSelectionState(chosen);
           let sectionVerified = clickResult.ok;
           let sectionReason = clickResult.reason;
           if (selectionState.hasSelectableControls) {
@@ -7313,6 +7372,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           let lastModel = model;
           let previousActionFingerprint = '';
           let previousPageFingerprint = buildAssistantPageFingerprint(browserContext);
+          const completedActionFingerprints = new Set();
           for (let stepIndex = 1; stepIndex <= maxSteps; stepIndex += 1) {
             const completion = await callAssistantApi({
               endpoint,
@@ -7334,7 +7394,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             });
             if (parsedPlan?.actions?.length) {
               const currentActionFingerprint = buildAssistantActionFingerprint(parsedPlan.actions);
-              const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null);
+              const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null, completedActionFingerprints);
               assistantActionResults.push(...stepResults);
               lastExecutionSummary = summarizeAssistantActions(stepResults);
               browserContext = await collectAssistantPageContext();
