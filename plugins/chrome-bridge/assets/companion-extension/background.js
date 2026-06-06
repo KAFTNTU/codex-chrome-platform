@@ -210,6 +210,7 @@ function buildAssistantSystemPrompt(context) {
     'For scrolling, use smoothScroll: negative totalY scrolls up, positive totalY scrolls down. Example: {"assistant_text":"Scrolling up a bit.","actions":[{"action":"smoothScroll","params":{"totalY":-800,"stepY":120,"delayMs":25}}]}',
     'For complex work, proceed in stages. After each assistant_text + actions response, wait for the execution results, then continue with the next step until done=true. If more work remains, keep done=false. Never repeat a greeting between steps.',
     'Always re-read the current page state after each browser action. Treat every next step as if the page may have changed after the previous click, scroll, input, or navigation.',
+    'Before execution results arrive, describe actions tentatively, for example "Спробую натиснути" or "Пробую вибрати", not as completed facts. Only treat a click or selection as successful after the bridge confirms it.',
     'If the request is simple and does not require browser actions, answer directly with assistant_text and set done=true.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
@@ -4346,6 +4347,77 @@ async function handleCommand(command) {
           if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
           return el.tagName.toLowerCase();
         };
+        const resolveToggleTarget = (el) => {
+          if (!el) return null;
+          const tag = el.tagName.toLowerCase();
+          const type = (el.getAttribute('type') || '').toLowerCase();
+          const role = (el.getAttribute('role') || '').toLowerCase();
+          if ((tag === 'input' && (type === 'radio' || type === 'checkbox')) || role === 'radio' || role === 'checkbox') {
+            return el;
+          }
+          if (tag === 'label') {
+            if (el.htmlFor) {
+              const linked = document.getElementById(el.htmlFor);
+              if (linked) return linked;
+            }
+            const nested = el.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+            if (nested) return nested;
+          }
+          return null;
+        };
+        const readToggleState = (el) => {
+          if (!el) return null;
+          if ('checked' in el) return !!el.checked;
+          const ariaChecked = el.getAttribute?.('aria-checked');
+          if (ariaChecked === 'true') return true;
+          if (ariaChecked === 'false') return false;
+          return null;
+        };
+        const dispatchVerifiedClick = (el) => {
+          const rect = el.getBoundingClientRect();
+          const clientX = rect.left + rect.width / 2;
+          const clientY = rect.top + rect.height / 2;
+          el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+          el.focus?.();
+          el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.click?.();
+        };
+        const clickWithVerification = (el) => {
+          const toggleTarget = resolveToggleTarget(el);
+          const before = readToggleState(toggleTarget);
+          dispatchVerifiedClick(el);
+          if (toggleTarget && readToggleState(toggleTarget) !== true && toggleTarget !== el) {
+            dispatchVerifiedClick(toggleTarget);
+          }
+          const after = readToggleState(toggleTarget);
+          if (toggleTarget) {
+            const verified = after === true || (before !== null && after !== null && before !== after);
+            return {
+              ok: verified,
+              verification: {
+                kind: 'toggle',
+                before,
+                after,
+                selector: selectorFor(toggleTarget),
+              },
+              reason: verified ? '' : 'Click was dispatched, but the radio/checkbox state did not change as expected.',
+            };
+          }
+          return {
+            ok: true,
+            verification: {
+              kind: 'click',
+              before: null,
+              after: null,
+              selector: selectorFor(el),
+            },
+            reason: '',
+          };
+        };
         const labelTextFor = (el, root = document) => {
           const parts = [];
           if (el?.id) {
@@ -4524,13 +4596,13 @@ async function handleCommand(command) {
               controls: sectionSummary.controls,
             };
           }
-          chosen.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-          chosen.focus?.();
-          chosen.click?.();
+          const clickResult = clickWithVerification(chosen);
           return {
-            ok: true,
+            ok: clickResult.ok,
+            reason: clickResult.reason,
             section: sectionSummary.section,
             clicked: summarizeControl(chosen, scored[0]?.idx ?? controlIndex ?? 0, sectionEl),
+            verification: clickResult.verification,
           };
         }
         if (payload.mode === 'fill' || payload.commandName === 'fillWithinSection') {
@@ -4953,6 +5025,77 @@ async function handleCommand(command) {
           if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
           return el.tagName.toLowerCase();
         };
+        const resolveToggleTarget = (el) => {
+          if (!el) return null;
+          const tag = el.tagName.toLowerCase();
+          const type = (el.getAttribute('type') || '').toLowerCase();
+          const role = (el.getAttribute('role') || '').toLowerCase();
+          if ((tag === 'input' && (type === 'radio' || type === 'checkbox')) || role === 'radio' || role === 'checkbox') {
+            return el;
+          }
+          if (tag === 'label') {
+            if (el.htmlFor) {
+              const linked = document.getElementById(el.htmlFor);
+              if (linked) return linked;
+            }
+            const nested = el.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+            if (nested) return nested;
+          }
+          return null;
+        };
+        const readToggleState = (el) => {
+          if (!el) return null;
+          if ('checked' in el) return !!el.checked;
+          const ariaChecked = el.getAttribute?.('aria-checked');
+          if (ariaChecked === 'true') return true;
+          if (ariaChecked === 'false') return false;
+          return null;
+        };
+        const dispatchVerifiedClick = (el) => {
+          const rect = el.getBoundingClientRect();
+          const clientX = rect.left + rect.width / 2;
+          const clientY = rect.top + rect.height / 2;
+          el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+          el.focus?.();
+          el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.click?.();
+        };
+        const clickWithVerification = (el) => {
+          const toggleTarget = resolveToggleTarget(el);
+          const before = readToggleState(toggleTarget);
+          dispatchVerifiedClick(el);
+          if (toggleTarget && readToggleState(toggleTarget) !== true && toggleTarget !== el) {
+            dispatchVerifiedClick(toggleTarget);
+          }
+          const after = readToggleState(toggleTarget);
+          if (toggleTarget) {
+            const verified = after === true || (before !== null && after !== null && before !== after);
+            return {
+              ok: verified,
+              verification: {
+                kind: 'toggle',
+                before,
+                after,
+                selector: selectorFor(toggleTarget),
+              },
+              reason: verified ? '' : 'Click was dispatched, but the radio/checkbox state did not change as expected.',
+            };
+          }
+          return {
+            ok: true,
+            verification: {
+              kind: 'click',
+              before: null,
+              after: null,
+              selector: selectorFor(el),
+            },
+            reason: '',
+          };
+        };
         const elementId = norm(payload.elementId || payload.element_id || payload.id || '');
         const query = norm(payload.selector || (elementId ? `#${elementId}` : ''));
         const needle = lower(payload.needle || payload.intent || '');
@@ -5009,12 +5152,11 @@ async function handleCommand(command) {
             controls: controls.length,
           };
         }
-        chosen.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-        chosen.focus?.();
-        chosen.click?.();
+        const clickResult = clickWithVerification(chosen);
         const rect = chosen.getBoundingClientRect();
         return {
-          ok: true,
+          ok: clickResult.ok,
+          reason: clickResult.reason,
           tag: chosen.tagName.toLowerCase(),
           type: chosen.getAttribute('type') || null,
           role: chosen.getAttribute('role') || null,
@@ -5022,6 +5164,7 @@ async function handleCommand(command) {
           text: norm(chosen.innerText || chosen.textContent || chosen.value || '').slice(0, 180),
           label: labelTextFor(chosen).slice(0, 180),
           href: chosen.href || null,
+          verification: clickResult.verification,
           x: Math.round(rect.left),
           y: Math.round(rect.top),
           width: Math.round(rect.width),
@@ -5048,6 +5191,82 @@ async function handleCommand(command) {
         };
         const query = selector || null;
         const normalizeIntent = lower(intent);
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          return el.tagName.toLowerCase();
+        };
+        const resolveToggleTarget = (el) => {
+          if (!el) return null;
+          const tag = el.tagName.toLowerCase();
+          const type = (el.getAttribute('type') || '').toLowerCase();
+          const role = (el.getAttribute('role') || '').toLowerCase();
+          if ((tag === 'input' && (type === 'radio' || type === 'checkbox')) || role === 'radio' || role === 'checkbox') {
+            return el;
+          }
+          if (tag === 'label') {
+            if (el.htmlFor) {
+              const linked = document.getElementById(el.htmlFor);
+              if (linked) return linked;
+            }
+            const nested = el.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+            if (nested) return nested;
+          }
+          return null;
+        };
+        const readToggleState = (el) => {
+          if (!el) return null;
+          if ('checked' in el) return !!el.checked;
+          const ariaChecked = el.getAttribute?.('aria-checked');
+          if (ariaChecked === 'true') return true;
+          if (ariaChecked === 'false') return false;
+          return null;
+        };
+        const dispatchVerifiedClick = (el) => {
+          const rect = el.getBoundingClientRect();
+          const clientX = rect.left + rect.width / 2;
+          const clientY = rect.top + rect.height / 2;
+          el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+          el.focus?.();
+          el.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX, clientY, button: 0, buttons: 1, view: window }));
+          el.click?.();
+        };
+        const clickWithVerification = (el) => {
+          const toggleTarget = resolveToggleTarget(el);
+          const before = readToggleState(toggleTarget);
+          dispatchVerifiedClick(el);
+          if (toggleTarget && readToggleState(toggleTarget) !== true && toggleTarget !== el) {
+            dispatchVerifiedClick(toggleTarget);
+          }
+          const after = readToggleState(toggleTarget);
+          if (toggleTarget) {
+            const verified = after === true || (before !== null && after !== null && before !== after);
+            return {
+              ok: verified,
+              verification: {
+                kind: 'toggle',
+                before,
+                after,
+                selector: selectorFor(toggleTarget),
+              },
+              reason: verified ? '' : 'Click was dispatched, but the radio/checkbox state did not change as expected.',
+            };
+          }
+          return {
+            ok: true,
+            verification: {
+              kind: 'click',
+              before: null,
+              after: null,
+              selector: selectorFor(el),
+            },
+            reason: '',
+          };
+        };
         const intentMap = [
           { match: /(submit|send|save|continue|next|finish|apply|upload|відправ|надісл|зберегти|далі|продовж|увійти|register|sign up)/i, needles: ['submit', 'send', 'save', 'continue', 'next', 'finish', 'apply', 'upload', 'ok', 'continue', 'save changes', 'зберегти', 'далі', 'продовжити', 'увійти', 'зареєструватися'] },
           { match: /(close|dismiss|cancel|back|закр|відміни|сховай|hide|x)/i, needles: ['close', 'dismiss', 'cancel', 'back', 'ok', 'done', 'закрити', 'скасувати', 'відмінити', 'x', '×'] },
@@ -5099,20 +5318,16 @@ async function handleCommand(command) {
           target = document.querySelector(selector);
         }
         if (!target) throw new Error(`No semantic click target found for: ${intent}`);
-        target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-        const rect = target.getBoundingClientRect();
-        target.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
-        target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
-        target.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
-        target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
-        target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0, buttons: 1, view: window }));
-        if (typeof target.click === 'function') target.click();
+        const clickResult = clickWithVerification(target);
         return {
-          clicked: true,
+          clicked: clickResult.ok,
+          ok: clickResult.ok,
+          reason: clickResult.reason,
           intent,
-          selector: target.id ? `#${CSS.escape(target.id)}` : target.tagName.toLowerCase(),
+          selector: selectorFor(target),
           tag: target.tagName.toLowerCase(),
           text: norm(target.innerText || target.textContent || target.value || '').slice(0, 160),
+          verification: clickResult.verification,
         };
       }, [params.intent || params.text || '', params.selector || null], params.tabId ?? null, () => ({
         intent: params.intent || params.text || '',
