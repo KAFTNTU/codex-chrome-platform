@@ -318,6 +318,12 @@
       overscroll-behavior: contain;
       -webkit-overflow-scrolling: touch;
       scroll-behavior: smooth;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+    }
+    .chat-history::-webkit-scrollbar {
+      width: 0;
+      height: 0;
     }
     .chat-msg {
       max-width: 100%;
