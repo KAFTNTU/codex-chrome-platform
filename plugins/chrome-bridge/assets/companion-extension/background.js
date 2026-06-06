@@ -4332,6 +4332,29 @@ async function handleCommand(command) {
       return await executeInTab((payload) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
         const lower = (value) => norm(value).toLowerCase();
+        const CANONICAL_CHAR_MAP = {
+          'а': 'a', 'a': 'a',
+          'е': 'e', 'e': 'e',
+          'о': 'o', 'o': 'o',
+          'р': 'p', 'p': 'p',
+          'с': 'c', 'c': 'c',
+          'у': 'y', 'y': 'y',
+          'х': 'x', 'x': 'x',
+          'і': 'i', 'i': 'i', 'ї': 'i', 'ï': 'i',
+          'к': 'k', 'k': 'k',
+          'м': 'm', 'm': 'm',
+          'т': 't', 't': 't',
+          'в': 'b', 'b': 'b',
+          'н': 'h', 'h': 'h',
+        };
+        const canonical = (value) => {
+          const source = lower(value);
+          let result = '';
+          for (const char of source) {
+            result += CANONICAL_CHAR_MAP[char] || char;
+          }
+          return result;
+        };
         const visible = (el) => {
           if (!el) return false;
           const style = window.getComputedStyle(el);
@@ -4444,6 +4467,8 @@ async function handleCommand(command) {
           const role = el.getAttribute('role') || null;
           const text = norm(el.innerText || el.textContent || el.value || '').slice(0, 160);
           const label = labelTextFor(el, root).slice(0, 160);
+          const ariaLabel = norm(el.getAttribute('aria-label') || '').slice(0, 160);
+          const rowText = norm(el.closest('li, tr, .row, .multichoice-question, fieldset, section, article')?.innerText || '').slice(0, 220);
           const rect = el.getBoundingClientRect();
           return {
             index,
@@ -4453,6 +4478,8 @@ async function handleCommand(command) {
             selector: selectorFor(el),
             text,
             label,
+            ariaLabel,
+            rowText,
             id: el.id || null,
             name: el.getAttribute('name') || null,
             placeholder: el.getAttribute('placeholder') || null,
@@ -4480,15 +4507,20 @@ async function handleCommand(command) {
         ];
         const findSection = () => {
           if (!sectionNeedle) return null;
+          const sectionNeedleCanonical = canonical(sectionNeedle);
           const anchors = Array.from(document.querySelectorAll(anchorQuery)).filter(visible);
           const candidates = [];
           for (const anchor of anchors) {
             const anchorText = lower(anchor.innerText || anchor.textContent || '');
+            const anchorCanonical = canonical(anchorText);
             if (!anchorText) continue;
             let score = 0;
             if (anchorText === sectionNeedle) score += 5000;
             if (anchorText.startsWith(sectionNeedle)) score += 2500;
             if (anchorText.includes(sectionNeedle)) score += 1500;
+            if (anchorCanonical === sectionNeedleCanonical) score += 4500;
+            if (anchorCanonical.startsWith(sectionNeedleCanonical)) score += 2200;
+            if (anchorCanonical.includes(sectionNeedleCanonical)) score += 1300;
             if (exact && anchorText !== sectionNeedle) continue;
             if (score <= 0) continue;
             let container = null;
@@ -4554,6 +4586,8 @@ async function handleCommand(command) {
         if (payload.mode === 'click' || payload.commandName === 'clickWithinSection') {
           const controlNeedle = lower(payload.controlNeedle || payload.control || payload.intent || payload.needle || '');
           const sectionNeedleForClick = lower(payload.sectionNeedle || '');
+          const controlNeedleCanonical = canonical(controlNeedle);
+          const sectionNeedleCanonical = canonical(sectionNeedleForClick);
           const controlIndex = Number.isFinite(Number(payload.controlIndex ?? payload.index)) ? Number(payload.controlIndex ?? payload.index) : null;
           if (!sectionNeedleForClick) {
             return {
@@ -4562,7 +4596,7 @@ async function handleCommand(command) {
               controls: sectionSummary.controls,
             };
           }
-          if (controlNeedle && sectionNeedleForClick === controlNeedle) {
+          if (controlNeedle && sectionNeedleCanonical === controlNeedleCanonical) {
             return {
               ok: false,
               reason: 'sectionNeedle matches controlNeedle. sectionNeedle should name the section or question, while controlNeedle should name the local option to click.',
@@ -4575,17 +4609,23 @@ async function handleCommand(command) {
             const hay = lower([
               summary.text,
               summary.label,
+              summary.ariaLabel,
+              summary.rowText,
               summary.selector,
               summary.id,
               summary.name,
               summary.placeholder,
             ].filter(Boolean).join(' '));
+            const hayCanonical = canonical(hay);
             let score = 0;
             if (controlIndex != null && idx === controlIndex) score += 4000;
             if (controlNeedle) {
               if (hay === controlNeedle) score += 2000;
               if (hay.startsWith(controlNeedle)) score += 1200;
               if (hay.includes(controlNeedle)) score += 800;
+              if (hayCanonical === controlNeedleCanonical) score += 1900;
+              if (hayCanonical.startsWith(controlNeedleCanonical)) score += 1100;
+              if (hayCanonical.includes(controlNeedleCanonical)) score += 750;
             }
             return { el, idx, score, summary };
           }).filter((item) => item.score > 0 || (controlIndex != null && item.idx === controlIndex)).sort((a, b) => b.score - a.score);
