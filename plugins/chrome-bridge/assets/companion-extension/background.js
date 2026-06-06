@@ -4586,6 +4586,15 @@ async function handleCommand(command) {
           'main',
         ];
         const visibleControlsIn = (container) => Array.from(container.querySelectorAll(controlQuery)).filter(visible);
+        const domDepth = (node) => {
+          let depth = 0;
+          let current = node;
+          while (current && current.parentElement) {
+            depth += 1;
+            current = current.parentElement;
+          }
+          return depth;
+        };
         const expandSectionScopes = (anchor, container) => {
           const scopes = [];
           const addScope = (node) => {
@@ -4643,13 +4652,13 @@ async function handleCommand(command) {
             if (anchorCanonical.includes(sectionNeedleCanonical)) score += 1300;
             if (exact && anchorText !== sectionNeedle) continue;
             if (score <= 0) continue;
-            let container = null;
-            for (const selector of containerSelectors) {
-              const match = anchor.closest(selector);
-              if (match && visible(match)) {
-                container = match;
-                if (selector === 'fieldset' || selector === 'section' || selector === 'article' || selector === 'form') break;
-              }
+            let container = anchor.closest('.test_instruction, .question, .prompt, .item-title');
+            if (!container || !visible(container)) {
+              const nearestContainers = containerSelectors
+                .map((selector) => anchor.closest(selector))
+                .filter((match, index, list) => match && visible(match) && list.indexOf(match) === index)
+                .sort((a, b) => domDepth(b) - domDepth(a));
+              container = nearestContainers[0] || null;
             }
             container = container || anchor.parentElement || anchor;
             if (!container || !visible(container)) continue;
