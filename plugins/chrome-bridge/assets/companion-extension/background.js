@@ -254,13 +254,21 @@ async function callAssistantApi({ endpoint, apiKey, model, task, context, messag
     const message = data?.error?.message || data?.message || rawText || `HTTP ${response.status}`;
     throw new Error(message);
   }
-  const reply = data?.choices?.[0]?.message?.content
+  const candidateReply = data?.choices?.[0]?.message?.content
     ?? data?.choices?.[0]?.text
     ?? data?.output_text
     ?? data?.output?.text
-    ?? rawText
+    ?? data?.message?.content
+    ?? data?.response
     ?? '';
-  return { reply: String(reply).trim(), model: selectedModel, raw: data };
+  const reply = String(candidateReply || '').trim();
+  return {
+    reply,
+    model: selectedModel,
+    raw: data,
+    rawText,
+    hasTextReply: !!reply,
+  };
 }
 
 function stripAssistantJsonFence(text) {
@@ -319,6 +327,25 @@ function normalizeAssistantPlan(plan) {
     actions,
     done,
   };
+}
+
+function extractAssistantTextFromCompletion(completion) {
+  const reply = String(completion?.reply || '').trim();
+  if (reply) return reply;
+  const raw = completion?.raw;
+  const candidates = [
+    raw?.choices?.[0]?.message?.content,
+    raw?.choices?.[0]?.text,
+    raw?.output_text,
+    raw?.output?.text,
+    raw?.message?.content,
+    raw?.response,
+  ];
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim();
+    if (text) return text;
+  }
+  return '';
 }
 
 function buildAssistantStepPrompt(task, stepIndex, previousSummary, lastActionSummary) {
@@ -6264,13 +6291,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               messages: conversation,
             });
             lastModel = completion.model || lastModel;
-            const parsedPlan = normalizeAssistantPlan(parseAssistantPlan(completion.reply));
-            const assistantText = parsedPlan?.assistantText || completion.reply || 'No response text returned.';
+            const completionText = extractAssistantTextFromCompletion(completion);
+            const parsedPlan = normalizeAssistantPlan(parseAssistantPlan(completionText));
+            const assistantText = parsedPlan?.assistantText || completionText || 'No response text returned.';
             assistantReplies.push(assistantText);
             pushAssistantChat({ role: 'assistant', text: `Step ${stepIndex}: ${assistantText}` });
             conversation.push({
               role: 'assistant',
-              content: completion.reply,
+              content: assistantText,
             });
             if (parsedPlan?.actions?.length) {
               const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null);
