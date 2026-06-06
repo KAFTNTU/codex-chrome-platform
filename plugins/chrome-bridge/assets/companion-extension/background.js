@@ -202,6 +202,7 @@ function buildAssistantSystemPrompt(context) {
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
     'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
     'For section-scoped tools, use params named sectionNeedle and controlNeedle. Avoid old names like sectionSelector or controlSelector when you generate new actions.',
+    'For question-like or option-like sections that contain radios, checkboxes, or labels, prefer clickWithinSection. Use fillWithinSection only for actual text/select/editable fields that need values typed or selected.',
     'Before searching the web, use the current page context, pageSummary, pageDomOutline, pageDomSnapshot, pageInteractMap, pageTestDigest, pageDigest, site memory, and your own knowledge. Do not leave the current page to search for information unless the user explicitly asks you to search the web or the answer truly requires external lookup.',
     'When browser actions are needed, return ONLY valid JSON with this shape: {"assistant_text":"...","actions":[{"action":"...","params":{}}],"done":false}. Do not add markdown, code fences, or extra prose around the JSON.',
     'The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, moveCursor, waitForPageReady, and scroll or smoothScroll.',
@@ -4521,6 +4522,30 @@ async function handleCommand(command) {
             const tag = el.tagName.toLowerCase();
             return tag === 'input' || tag === 'textarea' || tag === 'select' || el.getAttribute('contenteditable') === 'true';
           });
+          const optionLike = sectionControls.filter((el) => {
+            const tag = el.tagName.toLowerCase();
+            const type = (el.getAttribute('type') || '').toLowerCase();
+            const role = (el.getAttribute('role') || '').toLowerCase();
+            return type === 'radio' || type === 'checkbox' || role === 'radio' || role === 'checkbox' || tag === 'label';
+          });
+          if (!Object.keys(fields).length) {
+            return {
+              ok: false,
+              reason: 'No fields were provided for fillWithinSection. Use clickWithinSection for option-style sections or pass a fields object for real inputs.',
+              section: sectionSummary.section,
+              controls: sectionSummary.controls,
+            };
+          }
+          if (!editable.length) {
+            return {
+              ok: false,
+              reason: optionLike.length
+                ? 'This section looks like selectable options (radio/checkbox/label), not fillable text fields. Use clickWithinSection instead of fillWithinSection.'
+                : 'No editable fields were found inside this section.',
+              section: sectionSummary.section,
+              controls: sectionSummary.controls,
+            };
+          }
           const updates = [];
           for (const [fieldNeedleRaw, fieldValue] of Object.entries(fields)) {
             const fieldNeedle = lower(fieldNeedleRaw);
@@ -4566,6 +4591,11 @@ async function handleCommand(command) {
           }
           return {
             ok: updates.some((item) => item.ok),
+            reason: updates.some((item) => item.ok)
+              ? ''
+              : optionLike.length
+                ? 'No matching editable fields were updated. This section appears to contain selectable options, so clickWithinSection is likely the correct tool.'
+                : 'No matching editable fields were updated inside this section.',
             section: sectionSummary.section,
             updates,
           };
