@@ -200,6 +200,7 @@ function buildAssistantSystemPrompt(context) {
     'Do not greet the user or start with generic chat like "Hello". If the task is browser-related, immediately work on the page. If the task is unclear, ask one short clarifying question instead of chatting.',
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
+    'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
     'Before searching the web, use the current page context, pageSummary, pageDomOutline, pageDomSnapshot, pageInteractMap, pageTestDigest, pageDigest, site memory, and your own knowledge. Do not leave the current page to search for information unless the user explicitly asks you to search the web or the answer truly requires external lookup.',
     'When browser actions are needed, return ONLY valid JSON with this shape: {"assistant_text":"...","actions":[{"action":"...","params":{}}],"done":false}. Do not add markdown, code fences, or extra prose around the JSON.',
     'The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, moveCursor, waitForPageReady, and scroll or smoothScroll.',
@@ -210,7 +211,7 @@ function buildAssistantSystemPrompt(context) {
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -523,6 +524,11 @@ function normalizeCommandAction(action) {
     pagedomoutline: 'pageDomOutline',
     pagedomsnapshot: 'pageDomSnapshot',
     pagesectionreader: 'pageSectionReader',
+    scopetosection: 'scopeToSection',
+    listsectioncontrols: 'listSectionControls',
+    clickwithinsection: 'clickWithinSection',
+    fillwithinsection: 'fillWithinSection',
+    describesection: 'describeSection',
     pageintentmap: 'pageIntentMap',
     pageinteractmap: 'pageInteractMap',
     pageinteractclick: 'pageInteractClick',
@@ -4312,6 +4318,280 @@ async function handleCommand(command) {
           headings: byHeading,
         };
       }, [{ maxItems: params.maxItems || 20 }], params.tabId ?? null);
+    case 'scopeToSection':
+    case 'listSectionControls':
+    case 'describeSection':
+    case 'clickWithinSection':
+    case 'fillWithinSection':
+      return await executeInTab((payload) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const lower = (value) => norm(value).toLowerCase();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const aria = el.getAttribute('aria-label');
+          if (aria) return `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria.slice(0, 40))}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const labelTextFor = (el, root = document) => {
+          const parts = [];
+          if (el?.id) {
+            for (const label of Array.from(root.querySelectorAll('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+          }
+          const closest = el?.closest?.('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          const ariaLabelledBy = el?.getAttribute?.('aria-labelledby');
+          if (ariaLabelledBy) {
+            for (const id of ariaLabelledBy.split(/\s+/).filter(Boolean)) {
+              const node = document.getElementById(id);
+              if (node) parts.push(node.innerText || node.textContent || '');
+            }
+          }
+          return norm(parts.join(' '));
+        };
+        const summarizeControl = (el, index, root) => {
+          const tag = el.tagName.toLowerCase();
+          const type = el.getAttribute('type') || null;
+          const role = el.getAttribute('role') || null;
+          const text = norm(el.innerText || el.textContent || el.value || '').slice(0, 160);
+          const label = labelTextFor(el, root).slice(0, 160);
+          const rect = el.getBoundingClientRect();
+          return {
+            index,
+            tag,
+            type,
+            role,
+            selector: selectorFor(el),
+            text,
+            label,
+            id: el.id || null,
+            name: el.getAttribute('name') || null,
+            placeholder: el.getAttribute('placeholder') || null,
+            checked: 'checked' in el ? !!el.checked : null,
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          };
+        };
+        const controlQuery = 'a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="radio"], [role="checkbox"], summary, label';
+        const anchorQuery = 'h1, h2, h3, h4, h5, h6, legend, summary, label, .question, .prompt, .item-title, p, li, td, th, span, div';
+        const sectionNeedle = lower(payload.sectionNeedle || payload.needle || payload.section || payload.heading || '');
+        const exact = payload.exact === true;
+        const maxItems = Math.max(1, Number(payload.maxItems || 30));
+        const containerSelectors = [
+          'fieldset',
+          'section',
+          'article',
+          'form',
+          'li',
+          'tr',
+          'div',
+          'main',
+        ];
+        const findSection = () => {
+          if (!sectionNeedle) return null;
+          const anchors = Array.from(document.querySelectorAll(anchorQuery)).filter(visible);
+          const candidates = [];
+          for (const anchor of anchors) {
+            const anchorText = lower(anchor.innerText || anchor.textContent || '');
+            if (!anchorText) continue;
+            let score = 0;
+            if (anchorText === sectionNeedle) score += 5000;
+            if (anchorText.startsWith(sectionNeedle)) score += 2500;
+            if (anchorText.includes(sectionNeedle)) score += 1500;
+            if (exact && anchorText !== sectionNeedle) continue;
+            if (score <= 0) continue;
+            let container = null;
+            for (const selector of containerSelectors) {
+              const match = anchor.closest(selector);
+              if (match && visible(match)) {
+                container = match;
+                if (selector === 'fieldset' || selector === 'section' || selector === 'article' || selector === 'form') break;
+              }
+            }
+            container = container || anchor.parentElement || anchor;
+            if (!container || !visible(container)) continue;
+            const controls = Array.from(container.querySelectorAll(controlQuery)).filter(visible);
+            score += Math.min(controls.length, 15) * 40;
+            if (/^h[1-6]$/.test(anchor.tagName.toLowerCase()) || anchor.tagName.toLowerCase() === 'legend') score += 600;
+            candidates.push({ anchor, container, score, controls });
+          }
+          candidates.sort((a, b) => b.score - a.score);
+          return candidates[0] || null;
+        };
+        const sectionMatch = findSection();
+        if (!sectionMatch) {
+          return {
+            ok: false,
+            reason: sectionNeedle ? `No visible section found for: ${sectionNeedle}` : 'Missing section needle',
+          };
+        }
+        const sectionEl = sectionMatch.container;
+        const sectionControls = sectionMatch.controls.slice(0, maxItems);
+        const sectionSummary = {
+          ok: true,
+          section: {
+            heading: norm(sectionMatch.anchor.innerText || sectionMatch.anchor.textContent || '').slice(0, 180),
+            selector: selectorFor(sectionEl),
+            anchorSelector: selectorFor(sectionMatch.anchor),
+            kind: sectionEl.tagName.toLowerCase(),
+            text: norm(sectionEl.innerText || sectionEl.textContent || '').slice(0, 400),
+            controls: sectionControls.length,
+            links: sectionEl.querySelectorAll('a[href]').length,
+            buttons: sectionEl.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]').length,
+            inputs: sectionEl.querySelectorAll('input, select, textarea, [contenteditable="true"]').length,
+          },
+          controls: sectionControls.map((el, index) => summarizeControl(el, index, sectionEl)),
+        };
+        if (payload.mode === 'scope' || payload.commandName === 'scopeToSection') {
+          return sectionSummary;
+        }
+        if (payload.mode === 'describe' || payload.commandName === 'describeSection') {
+          return {
+            ...sectionSummary,
+            summaryText: sectionControls
+              .slice(0, 12)
+              .map((el, index) => {
+                const control = summarizeControl(el, index, sectionEl);
+                return `${control.index}: ${control.tag}${control.type ? `:${control.type}` : ''} ${control.label || control.text || control.selector}`;
+              })
+              .join(' | '),
+          };
+        }
+        if (payload.mode === 'list' || payload.commandName === 'listSectionControls') {
+          return sectionSummary;
+        }
+        if (payload.mode === 'click' || payload.commandName === 'clickWithinSection') {
+          const controlNeedle = lower(payload.controlNeedle || payload.control || payload.intent || payload.needle || '');
+          const controlIndex = Number.isFinite(Number(payload.controlIndex ?? payload.index)) ? Number(payload.controlIndex ?? payload.index) : null;
+          const scored = sectionControls.map((el, idx) => {
+            const summary = summarizeControl(el, idx, sectionEl);
+            const hay = lower([
+              summary.text,
+              summary.label,
+              summary.selector,
+              summary.id,
+              summary.name,
+              summary.placeholder,
+            ].filter(Boolean).join(' '));
+            let score = 0;
+            if (controlIndex != null && idx === controlIndex) score += 4000;
+            if (controlNeedle) {
+              if (hay === controlNeedle) score += 2000;
+              if (hay.startsWith(controlNeedle)) score += 1200;
+              if (hay.includes(controlNeedle)) score += 800;
+            }
+            return { el, idx, score, summary };
+          }).filter((item) => item.score > 0 || (controlIndex != null && item.idx === controlIndex)).sort((a, b) => b.score - a.score);
+          const chosen = scored[0]?.el || (controlIndex != null ? sectionControls[controlIndex] : null);
+          if (!chosen) {
+            return {
+              ok: false,
+              reason: controlNeedle ? `No matching control found inside section: ${controlNeedle}` : 'No control specified inside section',
+              section: sectionSummary.section,
+              controls: sectionSummary.controls,
+            };
+          }
+          chosen.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+          chosen.focus?.();
+          chosen.click?.();
+          return {
+            ok: true,
+            section: sectionSummary.section,
+            clicked: summarizeControl(chosen, scored[0]?.idx ?? controlIndex ?? 0, sectionEl),
+          };
+        }
+        if (payload.mode === 'fill' || payload.commandName === 'fillWithinSection') {
+          const fields = payload.fields && typeof payload.fields === 'object' ? payload.fields : {};
+          const editable = sectionControls.filter((el) => {
+            const tag = el.tagName.toLowerCase();
+            return tag === 'input' || tag === 'textarea' || tag === 'select' || el.getAttribute('contenteditable') === 'true';
+          });
+          const updates = [];
+          for (const [fieldNeedleRaw, fieldValue] of Object.entries(fields)) {
+            const fieldNeedle = lower(fieldNeedleRaw);
+            const ranked = editable.map((el, idx) => {
+              const info = summarizeControl(el, idx, sectionEl);
+              const hay = lower([
+                info.label,
+                info.text,
+                info.selector,
+                info.id,
+                info.name,
+                info.placeholder,
+              ].filter(Boolean).join(' '));
+              let score = 0;
+              if (hay === fieldNeedle) score += 2000;
+              if (hay.startsWith(fieldNeedle)) score += 1200;
+              if (hay.includes(fieldNeedle)) score += 800;
+              return { el, info, score };
+            }).filter((item) => item.score > 0).sort((a, b) => b.score - a.score);
+            const chosen = ranked[0]?.el || null;
+            if (!chosen) {
+              updates.push({ field: fieldNeedleRaw, ok: false, reason: 'No matching field in section' });
+              continue;
+            }
+            const value = String(fieldValue ?? '');
+            chosen.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+            chosen.focus?.();
+            if (chosen.tagName.toLowerCase() === 'select') {
+              const option = Array.from(chosen.options || []).find((opt) => lower(opt.textContent || opt.value || '') === lower(value) || lower(opt.textContent || opt.value || '').includes(lower(value)));
+              if (option) {
+                chosen.value = option.value;
+              } else {
+                chosen.value = value;
+              }
+            } else if (chosen.getAttribute('contenteditable') === 'true') {
+              chosen.textContent = value;
+            } else {
+              chosen.value = value;
+            }
+            chosen.dispatchEvent(new Event('input', { bubbles: true }));
+            chosen.dispatchEvent(new Event('change', { bubbles: true }));
+            updates.push({ field: fieldNeedleRaw, ok: true, selector: selectorFor(chosen), value });
+          }
+          return {
+            ok: updates.some((item) => item.ok),
+            section: sectionSummary.section,
+            updates,
+          };
+        }
+        return {
+          ok: false,
+          reason: `Unsupported section mode: ${payload.mode || payload.commandName || 'unknown'}`,
+        };
+      }, [{
+        sectionNeedle: params.sectionNeedle || params.section_needle || params.needle || params.section || params.heading || null,
+        controlNeedle: params.controlNeedle || params.control_needle || params.control || null,
+        controlIndex: params.controlIndex ?? params.control_index ?? null,
+        index: params.index ?? null,
+        exact: !!params.exact,
+        fields: params.fields || null,
+        maxItems: params.maxItems || 30,
+        mode: normalizedAction === 'scopeToSection'
+          ? 'scope'
+          : normalizedAction === 'listSectionControls'
+            ? 'list'
+            : normalizedAction === 'clickWithinSection'
+              ? 'click'
+              : normalizedAction === 'fillWithinSection'
+                ? 'fill'
+                : 'describe',
+        commandName: normalizedAction,
+      }], params.tabId ?? null);
     case 'modalDetector':
       return await executeInTab((options) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();

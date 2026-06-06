@@ -72,6 +72,11 @@ TOOLS = [
     {"name":"chrome_bridge_page_dom_outline","description":"Return a compact DOM outline with headings, forms, controls, landmarks, and optional text blocks.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"includeTextBlocks":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_summary","description":"Return a concise summary of the current page with title, url, headings, controls, and key notes.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_section_reader","description":"Read the page as logical sections with titles, visible text, and nearby controls.","inputSchema":{"type":"object","properties":{"maxSections":{"type":"integer"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_scope_to_section","description":"Find the best visible container section by heading or keyword and return only that scoped block.","inputSchema":{"type":"object","properties":{"sectionNeedle":{"type":"string"},"section_needle":{"type":"string"},"needle":{"type":"string"},"section":{"type":"string"},"heading":{"type":"string"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_list_section_controls","description":"List only the visible controls inside a matched section container.","inputSchema":{"type":"object","properties":{"sectionNeedle":{"type":"string"},"section_needle":{"type":"string"},"needle":{"type":"string"},"section":{"type":"string"},"heading":{"type":"string"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_click_within_section","description":"Click only inside a matched section container using a control keyword or index.","inputSchema":{"type":"object","properties":{"sectionNeedle":{"type":"string"},"section_needle":{"type":"string"},"needle":{"type":"string"},"section":{"type":"string"},"heading":{"type":"string"},"controlNeedle":{"type":"string"},"control_needle":{"type":"string"},"control":{"type":"string"},"controlIndex":{"type":"integer"},"control_index":{"type":"integer"},"index":{"type":"integer"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_fill_within_section","description":"Fill fields only inside a matched section container.","inputSchema":{"type":"object","properties":{"sectionNeedle":{"type":"string"},"section_needle":{"type":"string"},"needle":{"type":"string"},"section":{"type":"string"},"heading":{"type":"string"},"fields":{"type":"object","additionalProperties":True},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_describe_section","description":"Describe a matched visible section and summarize its local controls.","inputSchema":{"type":"object","properties":{"sectionNeedle":{"type":"string"},"section_needle":{"type":"string"},"needle":{"type":"string"},"section":{"type":"string"},"heading":{"type":"string"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_find_dom_control","description":"Find DOM controls by text, label, placeholder, name, id, role, or kind across the current page.","inputSchema":{"type":"object","properties":{"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["needle"],"additionalProperties":False}},
     {"name":"chrome_bridge_describe_dom_element","description":"Describe a specific DOM element or the best match for a needle, including label, attributes, form context, and geometry.","inputSchema":{"type":"object","properties":{"selector":{"type":"string"},"needle":{"type":"string"},"kind":{"type":"string","enum":["all","inputs","buttons","links","forms","text"]},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_modal_detector","description":"Detect visible modals, dialogs, popovers, toasts, and blocking overlays on the page.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
@@ -385,6 +390,49 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
             if field in arguments:
                 payload[field]=int(arguments[field]) if field in ("maxSections","maxItems","tabId") else bool(arguments[field])
         return as_text_content(call_bridge("pageSectionReader",payload))
+    if name=="chrome_bridge_scope_to_section":
+        payload={}
+        for field in ("sectionNeedle","section_needle","needle","section","heading","tabId"):
+            if field in arguments and arguments[field] is not None:
+                payload["tabId" if field=="tabId" else field]=int(arguments[field]) if field=="tabId" else arguments[field]
+        if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        return as_text_content(call_bridge("scopeToSection",payload))
+    if name=="chrome_bridge_list_section_controls":
+        payload={}
+        for field in ("sectionNeedle","section_needle","needle","section","heading","tabId"):
+            if field in arguments and arguments[field] is not None:
+                payload["tabId" if field=="tabId" else field]=int(arguments[field]) if field=="tabId" else arguments[field]
+        if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        return as_text_content(call_bridge("listSectionControls",payload))
+    if name=="chrome_bridge_click_within_section":
+        payload={}
+        for field in ("sectionNeedle","section_needle","needle","section","heading","controlNeedle","control_needle","control","tabId"):
+            if field in arguments and arguments[field] is not None:
+                payload["tabId" if field=="tabId" else field]=int(arguments[field]) if field=="tabId" else arguments[field]
+        for field in ("controlIndex","control_index","index","maxItems"):
+            if field in arguments and arguments[field] is not None:
+                payload[field]=int(arguments[field])
+        if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
+        return as_text_content(call_bridge("clickWithinSection",payload))
+    if name=="chrome_bridge_fill_within_section":
+        payload={}
+        for field in ("sectionNeedle","section_needle","needle","section","heading","tabId"):
+            if field in arguments and arguments[field] is not None:
+                payload["tabId" if field=="tabId" else field]=int(arguments[field]) if field=="tabId" else arguments[field]
+        if "fields" in arguments and arguments["fields"] is not None: payload["fields"]=arguments["fields"]
+        if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        return as_text_content(call_bridge("fillWithinSection",payload))
+    if name=="chrome_bridge_describe_section":
+        payload={}
+        for field in ("sectionNeedle","section_needle","needle","section","heading","tabId"):
+            if field in arguments and arguments[field] is not None:
+                payload["tabId" if field=="tabId" else field]=int(arguments[field]) if field=="tabId" else arguments[field]
+        if "exact" in arguments: payload["exact"]=bool(arguments["exact"])
+        if "maxItems" in arguments: payload["maxItems"]=int(arguments["maxItems"])
+        return as_text_content(call_bridge("describeSection",payload))
     if name=="chrome_bridge_find_dom_control":
         payload={"needle":arguments["needle"]}
         for field in ("kind","exact","maxItems","includeFrames","includeShadowDom","tabId"):
