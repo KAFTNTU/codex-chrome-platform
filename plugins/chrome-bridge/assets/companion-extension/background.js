@@ -205,6 +205,7 @@ function buildAssistantSystemPrompt(context) {
     'The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, waitForPageReady, and scroll or smoothScroll.',
     'For scrolling, use smoothScroll: negative totalY scrolls up, positive totalY scrolls down. Example: {"assistant_text":"Scrolling up a bit.","actions":[{"action":"smoothScroll","params":{"totalY":-800,"stepY":120,"delayMs":25}}]}',
     'For complex work, proceed in stages. After each assistant_text + actions response, wait for the execution results, then continue with the next step until done=true. If more work remains, keep done=false. Never repeat a greeting between steps.',
+    'Always re-read the current page state after each browser action. Treat every next step as if the page may have changed after the previous click, scroll, input, or navigation.',
     'If the request is simple and does not require browser actions, answer directly with assistant_text and set done=true.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
@@ -379,6 +380,74 @@ function buildAssistantStepPrompt(task, stepIndex, previousSummary, lastActionSu
     'Continue from the current browser state and return only JSON with assistant_text, actions, and done.',
     'If the task is finished, set done=true and return no further actions.',
   ].filter(Boolean).join('\n\n');
+}
+
+function buildAssistantRuntimeContext(browserContext) {
+  return {
+    activeTab: browserContext?.activeTab || null,
+    accessProfile: state.accessProfile,
+    bridgeConnected: state.connected,
+    pageSummary: browserContext?.pageSummary || null,
+    pageOutline: browserContext?.pageOutline || null,
+    pageSnapshot: browserContext?.pageSnapshot || null,
+    pageInteract: browserContext?.pageInteract || null,
+    pageTestDigest: browserContext?.pageTestDigest || null,
+    pageDigest: browserContext?.pageDigest || null,
+    draftAttachments: assistantDraftAttachments.map((item) => ({ ...item })),
+    archiveAttachments: assistantArchiveAttachments.map((item) => ({ ...item })),
+  };
+}
+
+function buildAssistantLiveContextSnippet(browserContext) {
+  const activeTab = browserContext?.activeTab || null;
+  const pageSummaryText = browserContext?.pageSummary?.summary
+    || browserContext?.pageSummary?.summaryText
+    || browserContext?.pageSummary?.mainText
+    || '';
+  const interactMap = browserContext?.pageInteract?.interactMap
+    || browserContext?.pageInteract?.controls
+    || [];
+  const interactText = Array.isArray(interactMap)
+    ? interactMap.slice(0, 10).map((item) => {
+        if (typeof item === 'string') return item;
+        const role = item?.kind || item?.role || item?.tag || 'control';
+        const text = item?.text || item?.ariaLabel || item?.placeholder || item?.name || '';
+        return `${item?.index ?? '?'}:${role}:${text}`.trim();
+      }).filter(Boolean).join(' | ')
+    : '';
+  const testText = browserContext?.pageTestDigest?.summaryText || '';
+  const digestText = browserContext?.pageDigest?.text
+    || browserContext?.pageDigest?.summaryText
+    || '';
+  return [
+    activeTab ? `Current page: ${activeTab.title || '(untitled)'} | ${activeTab.url || ''}` : 'Current page: unavailable',
+    pageSummaryText ? `Fresh page summary: ${pageSummaryText}` : '',
+    interactText ? `Fresh interact map: ${interactText}` : '',
+    testText ? `Fresh test digest: ${testText}` : '',
+    digestText ? `Fresh page digest: ${digestText}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+function buildAssistantActionFingerprint(actions = []) {
+  if (!Array.isArray(actions) || !actions.length) return '';
+  return JSON.stringify(actions.map((step) => ({
+    action: normalizeCommandAction(step?.action || ''),
+    params: step?.params || {},
+  })));
+}
+
+function buildAssistantPageFingerprint(browserContext) {
+  return JSON.stringify({
+    url: browserContext?.activeTab?.url || '',
+    title: browserContext?.activeTab?.title || '',
+    summary: browserContext?.pageSummary?.summary
+      || browserContext?.pageSummary?.summaryText
+      || browserContext?.pageSummary?.mainText
+      || '',
+    interact: browserContext?.pageInteract?.interactMap?.slice?.(0, 8) || browserContext?.pageInteract?.controls?.slice?.(0, 8) || [],
+    digest: browserContext?.pageDigest?.text || browserContext?.pageDigest?.summaryText || '',
+    testDigest: browserContext?.pageTestDigest?.summaryText || '',
+  });
 }
 
 function normalizeCommandAction(action) {
@@ -6363,20 +6432,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           const model = String(message.assistantModel || state.assistantModel || '').trim();
           if (!endpoint) throw new Error('Missing API endpoint');
           if (!apiKey) throw new Error('Missing API key');
-          const browserContext = await collectAssistantPageContext();
-          const assistantContext = {
-            activeTab: browserContext.activeTab,
-            accessProfile: state.accessProfile,
-            bridgeConnected: state.connected,
-            pageSummary: browserContext.pageSummary,
-            pageOutline: browserContext.pageOutline,
-            pageSnapshot: browserContext.pageSnapshot,
-            pageInteract: browserContext.pageInteract,
-            pageTestDigest: browserContext.pageTestDigest,
-            pageDigest: browserContext.pageDigest,
-            draftAttachments: assistantDraftAttachments.map((item) => ({ ...item })),
-            archiveAttachments: assistantArchiveAttachments.map((item) => ({ ...item })),
-          };
+          let browserContext = await collectAssistantPageContext();
+          let assistantContext = buildAssistantRuntimeContext(browserContext);
           const conversation = [
             {
               role: 'system',
@@ -6393,6 +6450,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           let lastExecutionSummary = '';
           let finished = false;
           let lastModel = model;
+          let previousActionFingerprint = '';
+          let previousPageFingerprint = buildAssistantPageFingerprint(browserContext);
           for (let stepIndex = 1; stepIndex <= maxSteps; stepIndex += 1) {
             const completion = await callAssistantApi({
               endpoint,
@@ -6413,9 +6472,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               content: assistantText,
             });
             if (parsedPlan?.actions?.length) {
+              const currentActionFingerprint = buildAssistantActionFingerprint(parsedPlan.actions);
               const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null);
               assistantActionResults.push(...stepResults);
               lastExecutionSummary = summarizeAssistantActions(stepResults);
+              browserContext = await collectAssistantPageContext();
+              assistantContext = buildAssistantRuntimeContext(browserContext);
+              const currentPageFingerprint = buildAssistantPageFingerprint(browserContext);
+              const repeatedAction = currentActionFingerprint
+                && previousActionFingerprint
+                && currentActionFingerprint === previousActionFingerprint;
+              const unchangedPage = currentPageFingerprint === previousPageFingerprint;
+              if (repeatedAction && unchangedPage && parsedPlan.done !== true) {
+                lastExecutionSummary = [
+                  lastExecutionSummary,
+                  'Guard: the same action repeated while the page fingerprint did not change. Stop repeating it and inspect the page again before acting.',
+                ].filter(Boolean).join('\n');
+              }
               pushAssistantChat({
                 role: 'assistant',
                 text: `Step ${stepIndex} results:\n${lastExecutionSummary}`,
@@ -6424,14 +6497,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 finished = true;
                 break;
               }
+              previousActionFingerprint = currentActionFingerprint;
+              previousPageFingerprint = currentPageFingerprint;
               conversation.push({
                 role: 'user',
-                content: buildAssistantStepPrompt(
-                  assistantTask,
-                  stepIndex + 1,
-                  assistantReplies.join('\n\n').slice(0, 4000),
-                  lastExecutionSummary,
-                ),
+                content: [
+                  buildAssistantStepPrompt(
+                    assistantTask,
+                    stepIndex + 1,
+                    assistantReplies.join('\n\n').slice(0, 4000),
+                    lastExecutionSummary,
+                  ),
+                  buildAssistantLiveContextSnippet(browserContext),
+                  repeatedAction && unchangedPage
+                    ? 'Important: you just repeated the same action without changing the page. Do not repeat that action again. Read the fresh page state and choose a different next step or finish.'
+                    : '',
+                ].filter(Boolean).join('\n\n'),
               });
               continue;
             }
