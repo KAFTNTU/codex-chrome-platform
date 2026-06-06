@@ -184,6 +184,7 @@ function buildAssistantSystemPrompt(context) {
     'The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, waitForPageReady, and scroll or smoothScroll.',
     'For scrolling, use smoothScroll: negative totalY scrolls up, positive totalY scrolls down. Example: {"assistant_text":"Scrolling up a bit.","actions":[{"action":"smoothScroll","params":{"totalY":-800,"stepY":120,"delayMs":25}}]}',
     'For complex work, proceed in stages. After each assistant_text + actions response, wait for the execution results, then continue with the next step until done=true. If more work remains, keep done=false. Never repeat a greeting between steps.',
+    'If the request is simple and does not require browser actions, answer directly with assistant_text and set done=true.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
@@ -5763,7 +5764,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           ];
           const assistantActionResults = [];
           const assistantReplies = [];
-          const maxSteps = 5;
+          const maxSteps = 100;
           let lastExecutionSummary = '';
           let finished = false;
           let lastModel = model;
@@ -5808,22 +5809,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               });
               continue;
             }
-            if (parsedPlan?.done === true || parsedPlan == null || !parsedPlan?.assistantText) {
-              finished = true;
-              break;
-            }
-            if (stepIndex < maxSteps) {
-              conversation.push({
-                role: 'user',
-                content: buildAssistantStepPrompt(
-                  assistantTask,
-                  stepIndex + 1,
-                  assistantReplies.join('\n\n').slice(0, 4000),
-                  lastExecutionSummary,
-                ),
-              });
-              continue;
-            }
+            finished = true;
+            break;
           }
           const assistantText = assistantReplies[assistantReplies.length - 1] || 'No response text returned.';
           state.assistantModel = lastModel || state.assistantModel;
