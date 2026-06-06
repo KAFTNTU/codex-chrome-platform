@@ -527,6 +527,7 @@ function normalizeCommandAction(action) {
     mousemove: 'moveCursor',
     movecursor: 'moveCursor',
     pagesummary: 'pageSummary',
+    pagedigest: 'pageSummary',
     pagedomoutline: 'pageDomOutline',
     pagedomsnapshot: 'pageDomSnapshot',
     pagesectionreader: 'pageSectionReader',
@@ -4355,6 +4356,32 @@ async function handleCommand(command) {
           }
           return result;
         };
+        const tokenize = (value) => canonical(value)
+          .replace(/[^a-z0-9а-яіїєґ]+/gi, ' ')
+          .split(/\s+/)
+          .map((part) => part.trim())
+          .filter(Boolean);
+        const tokenOverlapScore = (haystackText, needleText) => {
+          const hayTokens = tokenize(haystackText);
+          const needleTokens = tokenize(needleText);
+          if (!hayTokens.length || !needleTokens.length) return 0;
+          let score = 0;
+          for (const token of needleTokens) {
+            if (hayTokens.includes(token)) {
+              score += 180;
+            } else if (hayTokens.some((part) => part.startsWith(token) || token.startsWith(part))) {
+              score += 110;
+            } else if (hayTokens.some((part) => part.includes(token) || token.includes(part))) {
+              score += 70;
+            }
+          }
+          if (needleTokens.length > 1) {
+            const joinedNeedle = needleTokens.join(' ');
+            const joinedHay = hayTokens.join(' ');
+            if (joinedHay.includes(joinedNeedle)) score += 260;
+          }
+          return score;
+        };
         const visible = (el) => {
           if (!el) return false;
           const style = window.getComputedStyle(el);
@@ -4469,6 +4496,7 @@ async function handleCommand(command) {
           const label = labelTextFor(el, root).slice(0, 160);
           const ariaLabel = norm(el.getAttribute('aria-label') || '').slice(0, 160);
           const rowText = norm(el.closest('li, tr, .row, .multichoice-question, fieldset, section, article')?.innerText || '').slice(0, 220);
+          const groupText = norm(el.closest('[role="radiogroup"], [role="group"], ul, ol')?.getAttribute?.('aria-label') || '').slice(0, 180);
           const rect = el.getBoundingClientRect();
           return {
             index,
@@ -4480,6 +4508,7 @@ async function handleCommand(command) {
             label,
             ariaLabel,
             rowText,
+            groupText,
             id: el.id || null,
             name: el.getAttribute('name') || null,
             placeholder: el.getAttribute('placeholder') || null,
@@ -4505,6 +4534,36 @@ async function handleCommand(command) {
           'div',
           'main',
         ];
+        const visibleControlsIn = (container) => Array.from(container.querySelectorAll(controlQuery)).filter(visible);
+        const expandSectionScopes = (anchor, container) => {
+          const scopes = [];
+          const addScope = (node) => {
+            if (!node || !visible(node) || scopes.includes(node)) return;
+            scopes.push(node);
+          };
+          addScope(container);
+          const containerControls = visibleControlsIn(container);
+          const anchorTag = anchor.tagName?.toLowerCase?.() || '';
+          const shouldExpandToSibling = containerControls.length === 0
+            || container.classList?.contains?.('test_instruction')
+            || /^h[1-6]$/.test(anchorTag)
+            || container.querySelector('.test_instruction');
+          if (!shouldExpandToSibling) return scopes;
+          let sibling = container.nextElementSibling;
+          let safety = 0;
+          while (sibling && safety < 6) {
+            safety += 1;
+            if (!visible(sibling)) {
+              sibling = sibling.nextElementSibling;
+              continue;
+            }
+            if (sibling.classList?.contains?.('test_instruction')) break;
+            addScope(sibling);
+            if (visibleControlsIn(sibling).length > 0) break;
+            sibling = sibling.nextElementSibling;
+          }
+          return scopes;
+        };
         const findSection = () => {
           if (!sectionNeedle) return null;
           const sectionNeedleCanonical = canonical(sectionNeedle);
@@ -4533,10 +4592,12 @@ async function handleCommand(command) {
             }
             container = container || anchor.parentElement || anchor;
             if (!container || !visible(container)) continue;
-            const controls = Array.from(container.querySelectorAll(controlQuery)).filter(visible);
+            const scopes = expandSectionScopes(anchor, container);
+            const controls = scopes.flatMap((scope) => visibleControlsIn(scope)).filter((el, idx, list) => list.indexOf(el) === idx);
             score += Math.min(controls.length, 15) * 40;
+            if (controls.length > 0) score += 500;
             if (/^h[1-6]$/.test(anchor.tagName.toLowerCase()) || anchor.tagName.toLowerCase() === 'legend') score += 600;
-            candidates.push({ anchor, container, score, controls });
+            candidates.push({ anchor, container, primaryScope: scopes[0] || container, scopes, score, controls });
           }
           candidates.sort((a, b) => b.score - a.score);
           return candidates[0] || null;
@@ -4549,19 +4610,22 @@ async function handleCommand(command) {
           };
         }
         const sectionEl = sectionMatch.container;
+        const sectionScopes = sectionMatch.scopes?.length ? sectionMatch.scopes : [sectionEl];
+        const primarySectionEl = sectionMatch.primaryScope || sectionEl;
         const sectionControls = sectionMatch.controls.slice(0, maxItems);
         const sectionSummary = {
           ok: true,
           section: {
             heading: norm(sectionMatch.anchor.innerText || sectionMatch.anchor.textContent || '').slice(0, 180),
-            selector: selectorFor(sectionEl),
+            selector: selectorFor(primarySectionEl),
             anchorSelector: selectorFor(sectionMatch.anchor),
-            kind: sectionEl.tagName.toLowerCase(),
-            text: norm(sectionEl.innerText || sectionEl.textContent || '').slice(0, 400),
+            kind: primarySectionEl.tagName.toLowerCase(),
+            text: norm(sectionScopes.map((scope) => scope.innerText || scope.textContent || '').join(' ')).slice(0, 500),
             controls: sectionControls.length,
-            links: sectionEl.querySelectorAll('a[href]').length,
-            buttons: sectionEl.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]').length,
-            inputs: sectionEl.querySelectorAll('input, select, textarea, [contenteditable="true"]').length,
+            scopeCount: sectionScopes.length,
+            links: sectionScopes.reduce((sum, scope) => sum + scope.querySelectorAll('a[href]').length, 0),
+            buttons: sectionScopes.reduce((sum, scope) => sum + scope.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"]').length, 0),
+            inputs: sectionScopes.reduce((sum, scope) => sum + scope.querySelectorAll('input, select, textarea, [contenteditable="true"]').length, 0),
           },
           controls: sectionControls.map((el, index) => summarizeControl(el, index, sectionEl)),
         };
@@ -4611,6 +4675,7 @@ async function handleCommand(command) {
               summary.label,
               summary.ariaLabel,
               summary.rowText,
+              summary.groupText,
               summary.selector,
               summary.id,
               summary.name,
@@ -4626,6 +4691,7 @@ async function handleCommand(command) {
               if (hayCanonical === controlNeedleCanonical) score += 1900;
               if (hayCanonical.startsWith(controlNeedleCanonical)) score += 1100;
               if (hayCanonical.includes(controlNeedleCanonical)) score += 750;
+              score += tokenOverlapScore(hay, controlNeedle);
             }
             return { el, idx, score, summary };
           }).filter((item) => item.score > 0 || (controlIndex != null && item.idx === controlIndex)).sort((a, b) => b.score - a.score);
