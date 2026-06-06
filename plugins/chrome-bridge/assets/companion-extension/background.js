@@ -4262,6 +4262,200 @@ async function handleCommand(command) {
         }
         return result;
       }, [{ selector: params.selector || null, wrap: params.wrap !== false, focus: params.focus !== false, click: !!params.click }], params.tabId ?? null);
+    case 'pageInteractMap':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const lower = (value) => norm(value).toLowerCase();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const aria = el.getAttribute('aria-label');
+          if (aria) return `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria.slice(0, 40))}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const controlQuery = options.kind === 'inputs'
+          ? 'input, select, textarea, [contenteditable="true"]'
+          : options.kind === 'buttons'
+            ? 'button, input[type="button"], input[type="submit"], [role="button"]'
+            : options.kind === 'links'
+              ? 'a[href], [role="link"]'
+              : 'a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"], summary';
+        const controls = Array.from(document.querySelectorAll(controlQuery))
+          .filter(visible)
+          .slice(0, Math.max(1, Number(options.maxItems || 200)));
+        const labelTextFor = (el) => {
+          const parts = [];
+          if (el.id) {
+            for (const label of Array.from(document.querySelectorAll('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+            const labelled = String(el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean);
+            for (const id of labelled) {
+              const ref = document.getElementById(id);
+              if (ref) parts.push(ref.innerText || ref.textContent || '');
+            }
+          }
+          const closest = el.closest('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          return norm(parts.join(' '));
+        };
+        const controlsMap = controls.map((el, index) => {
+          const rect = el.getBoundingClientRect();
+          const text = norm(el.innerText || el.textContent || el.value || '').slice(0, 180);
+          const label = labelTextFor(el).slice(0, 180);
+          const hint = norm([
+            el.getAttribute('aria-label'),
+            el.getAttribute('placeholder'),
+            el.getAttribute('name'),
+            el.id,
+            el.getAttribute('title'),
+            label,
+          ].filter(Boolean).join(' ')).slice(0, 180);
+          const intent = lower([
+            text,
+            label,
+            hint,
+          ].filter(Boolean).join(' '));
+          return {
+            index,
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || null,
+            role: el.getAttribute('role') || null,
+            selector: selectorFor(el),
+            text,
+            label,
+            hint,
+            id: el.id || null,
+            name: el.getAttribute('name') || null,
+            href: el.href || null,
+            intent,
+            visible: true,
+            x: Math.round(rect.left),
+            y: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          };
+        });
+        return {
+          title: document.title,
+          url: location.href,
+          kind: options.kind || 'all',
+          controls: controlsMap,
+          summaryText: controlsMap.slice(0, 20).map((item) => `${item.index}: ${item.tag}${item.type ? `:${item.type}` : ''} ${item.label || item.text || item.hint || item.selector}`).join(' | '),
+        };
+      }, [{ kind: params.kind || 'all', maxItems: params.maxItems || 200 }], params.tabId ?? null);
+    case 'pageInteractClick':
+      return await executeInTab((payload) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const lower = (value) => norm(value).toLowerCase();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const selectorFor = (el) => {
+          if (!el) return null;
+          if (el.id) return `#${CSS.escape(el.id)}`;
+          const name = el.getAttribute('name');
+          if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+          const aria = el.getAttribute('aria-label');
+          if (aria) return `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria.slice(0, 40))}"]`;
+          const role = el.getAttribute('role');
+          if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+          return el.tagName.toLowerCase();
+        };
+        const query = norm(payload.selector || '');
+        const needle = lower(payload.needle || payload.intent || '');
+        const index = Number.isFinite(Number(payload.index)) ? Number(payload.index) : null;
+        const kind = String(payload.kind || 'all').toLowerCase();
+        const controlQuery = kind === 'inputs'
+          ? 'input, select, textarea, [contenteditable="true"]'
+          : kind === 'buttons'
+            ? 'button, input[type="button"], input[type="submit"], [role="button"]'
+            : kind === 'links'
+              ? 'a[href], [role="link"]'
+              : 'a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"], summary';
+        const controls = Array.from(document.querySelectorAll(controlQuery)).filter(visible);
+        const labelTextFor = (el) => {
+          const parts = [];
+          if (el.id) {
+            for (const label of Array.from(document.querySelectorAll('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+          }
+          const closest = el.closest('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          return norm(parts.join(' '));
+        };
+        const candidates = controls.map((el, idx) => {
+          const text = lower([
+            el.innerText,
+            el.textContent,
+            el.value,
+            el.getAttribute('aria-label'),
+            el.getAttribute('placeholder'),
+            el.getAttribute('title'),
+            labelTextFor(el),
+            el.getAttribute('name'),
+            el.id,
+          ].filter(Boolean).join(' '));
+          let score = 0;
+          if (index != null && idx === index) score += 2000;
+          if (query && selectorFor(el) === query) score += 3000;
+          if (needle) {
+            if (text === needle) score += 1000;
+            if (text.startsWith(needle)) score += 700;
+            if (text.includes(needle)) score += 500;
+          }
+          if (payload.exact === true && needle && text !== needle) return null;
+          if (score <= 0 && !query && !needle && index == null) return null;
+          return { el, score, idx };
+        }).filter(Boolean).sort((a, b) => b.score - a.score);
+        const chosen = candidates[0]?.el || (index != null ? controls[index] : null) || (query ? document.querySelector(query) : null);
+        if (!chosen) {
+          return {
+            ok: false,
+            reason: 'No matching visible control found',
+            controls: controls.length,
+          };
+        }
+        chosen.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+        chosen.focus?.();
+        chosen.click?.();
+        const rect = chosen.getBoundingClientRect();
+        return {
+          ok: true,
+          tag: chosen.tagName.toLowerCase(),
+          type: chosen.getAttribute('type') || null,
+          role: chosen.getAttribute('role') || null,
+          selector: selectorFor(chosen),
+          text: norm(chosen.innerText || chosen.textContent || chosen.value || '').slice(0, 180),
+          label: labelTextFor(chosen).slice(0, 180),
+          href: chosen.href || null,
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+      }, [{
+        selector: params.selector || null,
+        needle: params.needle || params.intent || null,
+        intent: params.intent || null,
+        index: params.index != null ? Number(params.index) : null,
+        kind: params.kind || 'all',
+        exact: !!params.exact,
+      }], params.tabId ?? null);
     case 'semanticClick':
       return await runAndRemember('semanticClick', (intent, selector) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
