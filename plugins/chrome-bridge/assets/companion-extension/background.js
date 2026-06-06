@@ -171,6 +171,9 @@ function buildAssistantSystemPrompt(context) {
       return `${item?.index ?? '?'}:${role}:${text}${intent}`;
     })?.join?.(' | ')
     || 'Interact map: unavailable';
+  const pageTestText = context?.pageTestDigest?.summaryText
+    || context?.pageTestDigest?.controls?.slice?.(0, 10)?.join?.(' | ')
+    || 'Test digest: unavailable';
   const pageDigestText = context?.pageDigest?.text
     || context?.pageDigest?.summaryText
     || 'Page digest: unavailable';
@@ -193,6 +196,7 @@ function buildAssistantSystemPrompt(context) {
     `Page summary: ${pageSummaryText}`,
     `DOM outline: ${pageOutlineText}`,
     `Interact map: ${pageInteractText}`,
+    `Test digest: ${pageTestText}`,
     `Page digest: ${pageDigestText}`,
   ].join('\n');
 }
@@ -415,6 +419,7 @@ async function collectAssistantPageContext() {
   let pageOutline = null;
   let pageSnapshot = null;
   let pageInteract = null;
+  let pageTestDigest = null;
   let pageDigest = null;
   try {
     const response = await post('/api/action', {
@@ -446,11 +451,109 @@ async function collectAssistantPageContext() {
   try {
     const response = await post('/api/action', {
       action: 'pageInteractMap',
-      params: { tabId: active?.id ?? null, kind: 'all', maxItems: 30 },
+      params: { tabId: active?.id ?? null, kind: 'all', maxItems: 60 },
     });
     pageInteract = response?.result || response || null;
   } catch {
     // Ignore pageInteractMap failures.
+  }
+  if (active?.id != null) {
+    try {
+      pageTestDigest = await executeInTab(() => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const labelTextFor = (el) => {
+          const parts = [];
+          if (el?.id) {
+            for (const label of Array.from(document.querySelectorAll('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+          }
+          const closest = el?.closest?.('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          const ariaLabelledBy = el?.getAttribute?.('aria-labelledby');
+          if (ariaLabelledBy) {
+            for (const id of ariaLabelledBy.split(/\s+/).filter(Boolean)) {
+              const node = document.getElementById(id);
+              if (node) parts.push(node.innerText || node.textContent || '');
+            }
+          }
+          return norm(parts.join(' '));
+        };
+        const questionTexts = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, p, legend, .question, .prompt, .item-title'))
+          .filter(visible)
+          .slice(0, 20)
+          .map((el) => norm(el.innerText || el.textContent || '').slice(0, 220))
+          .filter(Boolean);
+        const controls = Array.from(document.querySelectorAll('input, select, textarea, button, [role="button"], [role="radio"], [role="checkbox"], label'))
+          .filter(visible)
+          .slice(0, 80)
+          .map((el, index) => {
+            const tag = el.tagName.toLowerCase();
+            const type = el.getAttribute('type') || '';
+            const role = el.getAttribute('role') || '';
+            const text = norm(el.innerText || el.textContent || el.value || '').slice(0, 160);
+            const label = tag === 'label' ? text : labelTextFor(el);
+            const checked = 'checked' in el ? !!el.checked : null;
+            const selected = 'selected' in el ? !!el.selected : null;
+            const value = 'value' in el ? norm(el.value || '').slice(0, 120) : '';
+            return [
+              `${index}`,
+              tag,
+              type,
+              role,
+              label ? `label=${label}` : '',
+              text ? `text=${text}` : '',
+              value ? `value=${value}` : '',
+              checked != null ? `checked=${checked}` : '',
+              selected != null ? `selected=${selected}` : '',
+              el.getAttribute('name') ? `name=${el.getAttribute('name')}` : '',
+              el.id ? `id=${el.id}` : '',
+              el.getAttribute('placeholder') ? `placeholder=${el.getAttribute('placeholder')}` : '',
+            ].filter(Boolean).join(' | ');
+          });
+        const radioGroups = Array.from(document.querySelectorAll('input[type="radio"]'))
+          .filter(visible)
+          .slice(0, 40)
+          .map((el) => {
+            const name = el.getAttribute('name') || '';
+            const label = labelTextFor(el) || norm(el.getAttribute('aria-label') || '');
+            return `${name || '(no-group)'} => ${label || '(no-label)'}${el.checked ? ' [selected]' : ''}`;
+          });
+        const selectOptions = Array.from(document.querySelectorAll('select'))
+          .filter(visible)
+          .slice(0, 20)
+          .map((select) => {
+            const label = labelTextFor(select) || norm(select.getAttribute('aria-label') || select.getAttribute('placeholder') || '');
+            const options = Array.from(select.options || []).slice(0, 20).map((opt) => {
+              const text = norm(opt.textContent || opt.label || '');
+              return `${opt.selected ? '*' : '-'} ${text}`;
+            }).filter(Boolean);
+            return `${label || select.id || select.name || 'select'} => ${options.join(' | ')}`;
+          });
+        return {
+          title: document.title || '',
+          url: location.href,
+          questionTexts,
+          controls,
+          radioGroups,
+          selectOptions,
+          summaryText: [
+            `Questions: ${questionTexts.slice(0, 5).join(' || ') || '(none)'}`,
+            `Controls: ${controls.slice(0, 10).join(' || ') || '(none)'}`,
+            `Radio groups: ${radioGroups.slice(0, 10).join(' || ') || '(none)'}`,
+            `Selects: ${selectOptions.slice(0, 5).join(' || ') || '(none)'}`,
+          ].join(' | '),
+        };
+      }, [], active.id);
+    } catch {
+      // Ignore test digest failures.
+    }
   }
   if (active?.id != null) {
     try {
@@ -507,6 +610,7 @@ async function collectAssistantPageContext() {
     pageOutline,
     pageSnapshot,
     pageInteract,
+    pageTestDigest,
     pageDigest,
   };
 }
@@ -5750,6 +5854,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             pageOutline: browserContext.pageOutline,
             pageSnapshot: browserContext.pageSnapshot,
             pageInteract: browserContext.pageInteract,
+            pageTestDigest: browserContext.pageTestDigest,
             pageDigest: browserContext.pageDigest,
           };
           const conversation = [
