@@ -215,6 +215,7 @@ function buildAssistantSystemPrompt(context) {
     'Before execution results arrive, describe actions tentatively, for example "Спробую натиснути" or "Пробую вибрати", not as completed facts. Only treat a click or selection as successful after the bridge confirms it.',
     'If the request is simple and does not require browser actions, answer directly with assistant_text and set done=true.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
+    'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
     'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
@@ -3605,6 +3606,19 @@ async function handleCommand(command) {
           const rect = el.getBoundingClientRect();
           return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
         };
+        const pageLooksLikeTest = () => /test|quiz|exam|attempt|пройти тест|тест|іспит|екзамен|контроль/i.test([
+          document.title,
+          location.href,
+          document.body?.innerText?.slice(0, 3000),
+        ].filter(Boolean).join(' '));
+        if (pageLooksLikeTest()) {
+          return {
+            ok: false,
+            submitted: false,
+            blocked: true,
+            reason: 'Blocked submitForm on a test-like page. Manual confirmation in the page is required.',
+          };
+        }
         let target = null;
         if (selector) {
           target = document.querySelector(selector);
@@ -5319,6 +5333,22 @@ async function handleCommand(command) {
           if (closest) parts.push(closest.innerText || closest.textContent || '');
           return norm(parts.join(' '));
         };
+        const pageLooksLikeTest = () => /test|quiz|exam|attempt|пройти тест|тест|іспит|екзамен|контроль/i.test([
+          document.title,
+          location.href,
+          document.body?.innerText?.slice(0, 3000),
+        ].filter(Boolean).join(' '));
+        const targetText = (el) => lower([
+          el?.innerText,
+          el?.textContent,
+          el?.value,
+          el?.getAttribute?.('aria-label'),
+          el?.getAttribute?.('title'),
+          el?.getAttribute?.('name'),
+          el?.id,
+          labelTextFor(el),
+        ].filter(Boolean).join(' '));
+        const isFinalizeTarget = (el) => /(submit|send|finish|final|complete|turn in|відправ|надісл|заверш|закінч|здати|зберегти відповід|пройти тест|завершити тест)/i.test(targetText(el));
         const candidates = controls.map((el, idx) => {
           const text = lower([
             el.innerText,
@@ -5349,6 +5379,16 @@ async function handleCommand(command) {
             ok: false,
             reason: 'No matching visible control found',
             controls: controls.length,
+          };
+        }
+        if (pageLooksLikeTest() && isFinalizeTarget(chosen)) {
+          return {
+            ok: false,
+            blocked: true,
+            reason: 'Blocked finalize/submit click on a test-like page.',
+            selector: selectorFor(chosen),
+            text: norm(chosen.innerText || chosen.textContent || chosen.value || '').slice(0, 180),
+            label: labelTextFor(chosen).slice(0, 180),
           };
         }
         const clickResult = clickWithVerification(chosen);
@@ -5517,6 +5557,33 @@ async function handleCommand(command) {
           target = document.querySelector(selector);
         }
         if (!target) throw new Error(`No semantic click target found for: ${intent}`);
+        const semanticPageLooksLikeTest = () => /test|quiz|exam|attempt|пройти тест|тест|іспит|екзамен|контроль/i.test([
+          document.title,
+          location.href,
+          document.body?.innerText?.slice(0, 3000),
+        ].filter(Boolean).join(' '));
+        const semanticTargetText = (el) => lower([
+          el?.innerText,
+          el?.textContent,
+          el?.value,
+          el?.getAttribute?.('aria-label'),
+          el?.getAttribute?.('title'),
+          el?.getAttribute?.('name'),
+          el?.id,
+        ].filter(Boolean).join(' '));
+        const semanticIsFinalizeTarget = (el) => /(submit|send|finish|final|complete|turn in|відправ|надісл|заверш|закінч|здати|зберегти відповід|пройти тест|завершити тест)/i.test(semanticTargetText(el));
+        if (semanticPageLooksLikeTest() && semanticIsFinalizeTarget(target)) {
+          return {
+            clicked: false,
+            ok: false,
+            blocked: true,
+            reason: 'Blocked finalize/submit click on a test-like page.',
+            intent,
+            selector: selectorFor(target),
+            tag: target.tagName.toLowerCase(),
+            text: norm(target.innerText || target.textContent || target.value || '').slice(0, 160),
+          };
+        }
         const clickResult = clickWithVerification(target);
         return {
           clicked: clickResult.ok,
