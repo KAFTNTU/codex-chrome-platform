@@ -65,6 +65,7 @@ let formProfiles = {};
 let assistantChatLog = [];
 let assistantDraftAttachments = [];
 let assistantArchiveAttachments = [];
+let assistantRunSerial = 0;
 
 async function loadState() {
   const stored = await chrome.storage.local.get([
@@ -207,6 +208,7 @@ function buildAssistantSystemPrompt(context) {
     'Do not scroll aggressively by default. First use DOM context, interact maps, and section tools to understand the page. Only scroll when the needed element is not reachable from the current visible area or current DOM cues.',
     'When scrolling is needed, prefer small controlled steps. Use smoothScroll with modest values, for example totalY between 120 and 320 per step, instead of jumping half a page at once.',
     'Before searching the web, use the current page context, pageSummary, pageDomOutline, pageDomSnapshot, pageInteractMap, pageTestDigest, pageDigest, site memory, and your own knowledge. Do not leave the current page to search for information unless the user explicitly asks you to search the web or the answer truly requires external lookup.',
+    'If the active page looks like a test/quiz/exam/attempt, never use searchWeb, openNewTab, navigate, navigateAndWait, switchTab, closeTab, or workspace-tab actions. Stay on the same tab. If a requested question is not present in the current DOM, say that it is not present instead of leaving the page.',
     'When browser actions are needed, return ONLY valid JSON with this shape: {"assistant_text":"...","actions":[{"action":"...","params":{}}],"done":false}. Do not add markdown, code fences, or extra prose around the JSON.',
     'The actions array should contain bridge commands such as searchWeb, openNewTab, navigate, pageInteractClick, semanticClick, universalFormAssist, type, pasteText, hover, moveCursor, waitForPageReady, and scroll or smoothScroll.',
     'For scrolling, use smoothScroll: negative totalY scrolls up, positive totalY scrolls down. Example: {"assistant_text":"Scrolling up a bit.","actions":[{"action":"smoothScroll","params":{"totalY":-800,"stepY":120,"delayMs":25}}]}',
@@ -497,6 +499,43 @@ function buildAssistantPageFingerprint(browserContext) {
   });
 }
 
+function assistantContextLooksTestLike(browserContext) {
+  const text = [
+    browserContext?.activeTab?.url || '',
+    browserContext?.activeTab?.title || '',
+    browserContext?.pageSummary?.summaryText || '',
+    browserContext?.pageSummary?.mainText || '',
+    browserContext?.pageDigest?.text || '',
+    browserContext?.pageDigest?.summaryText || '',
+    browserContext?.pageTestDigest?.summaryText || '',
+  ].join(' ');
+  return /test|quiz|exam|attempt|take_test|my_tests|пройти тест|тест|іспит|екзамен|контроль/i.test(text);
+}
+
+function isTabLeavingAction(action) {
+  return [
+    'openNewTab',
+    'searchWeb',
+    'navigate',
+    'navigateAndWait',
+    'switchTab',
+    'closeTab',
+    'openInCodexWorkspace',
+    'createCodexTabGroup',
+    'redditComposeDraft',
+  ].includes(action);
+}
+
+function isUnsafeGlobalTestAction(action) {
+  return [
+    'pageInteractClick',
+    'semanticClick',
+    'universalFormAssist',
+    'pageWizardNext',
+    'pageWizardPrev',
+  ].includes(action);
+}
+
 function normalizeCommandAction(action) {
   const raw = String(action || '').trim();
   if (!raw) return '';
@@ -580,11 +619,34 @@ function summarizeAssistantActions(results = []) {
   }).join('\n');
 }
 
-async function runAssistantActionPlan(actions = [], tabId = null, completedActionFingerprints = null) {
+async function runAssistantActionPlan(actions = [], tabId = null, completedActionFingerprints = null, browserContext = null) {
   const results = [];
+  const testLikeContext = assistantContextLooksTestLike(browserContext);
   for (const step of actions.slice(0, 12)) {
     try {
       const normalizedAction = normalizeCommandAction(step?.action || '');
+      if (testLikeContext && isTabLeavingAction(normalizedAction)) {
+        results.push({
+          action: step.action,
+          result: {
+            ok: false,
+            blocked: true,
+            reason: 'Blocked navigation/search/tab-changing action while the active page looks like a test. Stay on the current page and use local page-reading or section-scoped tools only.',
+          },
+        });
+        continue;
+      }
+      if (testLikeContext && isUnsafeGlobalTestAction(normalizedAction)) {
+        results.push({
+          action: step.action,
+          result: {
+            ok: false,
+            blocked: true,
+            reason: 'Blocked global click/form action on a test-like page. Use scopeToSection, listSectionControls, describeSection, or clickWithinSection so the action stays inside one local question block.',
+          },
+        });
+        continue;
+      }
       const actionFingerprint = JSON.stringify({
         action: normalizedAction,
         params: {
@@ -7346,6 +7408,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'popup-run-assistant-task') {
       const assistantTask = String(message.assistantTask ?? state.assistantTask ?? '').trim();
       if (assistantTask) {
+        const runSerial = ++assistantRunSerial;
         pushAssistantChat({
           role: 'user',
           text: assistantTask,
@@ -7383,6 +7446,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           let previousPageFingerprint = buildAssistantPageFingerprint(browserContext);
           const completedActionFingerprints = new Set();
           for (let stepIndex = 1; stepIndex <= maxSteps; stepIndex += 1) {
+            if (runSerial !== assistantRunSerial) {
+              finished = true;
+              lastExecutionSummary = 'Stopped because a newer assistant task started.';
+              break;
+            }
             const completion = await callAssistantApi({
               endpoint,
               apiKey,
@@ -7391,6 +7459,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
               context: assistantContext,
               messages: conversation,
             });
+            if (runSerial !== assistantRunSerial) {
+              finished = true;
+              lastExecutionSummary = 'Stopped because a newer assistant task started.';
+              break;
+            }
             lastModel = completion.model || lastModel;
             const completionText = extractAssistantTextFromCompletion(completion);
             const parsedPlan = normalizeAssistantPlan(parseAssistantPlan(completionText));
@@ -7403,7 +7476,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             });
             if (parsedPlan?.actions?.length) {
               const currentActionFingerprint = buildAssistantActionFingerprint(parsedPlan.actions);
-              const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null, completedActionFingerprints);
+              const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null, completedActionFingerprints, browserContext);
               assistantActionResults.push(...stepResults);
               lastExecutionSummary = summarizeAssistantActions(stepResults);
               browserContext = await collectAssistantPageContext();
