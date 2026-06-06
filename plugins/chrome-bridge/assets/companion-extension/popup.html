@@ -99,16 +99,17 @@
     }
     textarea {
       width: 100%;
-      min-height: 44px;
-      max-height: 140px;
+      min-height: 24px;
+      max-height: 96px;
       resize: none;
-      border-radius: 16px;
+      border-radius: 12px;
       border: 0;
       background: transparent;
       color: var(--text);
-      padding: 10px 0;
+      padding: 4px 0;
       font: inherit;
       outline: none;
+      line-height: 1.25;
     }
     code {
       display: block;
@@ -348,10 +349,10 @@
     .composer {
       border: 1px solid #273241;
       background: linear-gradient(180deg, #161d27 0%, #121821 100%);
-      border-radius: 22px;
-      padding: 10px 12px 12px;
+      border-radius: 18px;
+      padding: 8px 10px 9px;
       display: grid;
-      gap: 8px;
+      gap: 6px;
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
     .composer.dragover {
@@ -445,23 +446,12 @@
     }
     .composer-row {
       display: flex;
-      align-items: flex-end;
-      gap: 10px;
+      align-items: center;
+      gap: 8px;
     }
     .icon-button {
-      width: 36px;
-      height: 36px;
-      border-radius: 999px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      font-size: 18px;
-      flex: 0 0 auto;
-    }
-    .send-button {
-      width: 36px;
-      height: 36px;
+      width: 32px;
+      height: 32px;
       border-radius: 999px;
       display: inline-flex;
       align-items: center;
@@ -470,15 +460,27 @@
       font-size: 16px;
       flex: 0 0 auto;
     }
+    .send-button {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      font-size: 14px;
+      flex: 0 0 auto;
+    }
     .composer-main {
       flex: 1 1 auto;
       min-width: 0;
       display: grid;
-      gap: 4px;
+      gap: 2px;
     }
     .composer-hint {
-      font-size: 10px;
+      font-size: 9px;
       color: var(--muted);
+      opacity: 0.82;
     }
     .danger-action {
       background: #4a1d20;
