@@ -202,6 +202,7 @@ function buildAssistantSystemPrompt(context) {
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
     'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
     'For section-scoped tools, use params named sectionNeedle and controlNeedle. Avoid old names like sectionSelector or controlSelector when you generate new actions.',
+    'For clickWithinSection, sectionNeedle must describe the container heading or question label, while controlNeedle must describe the option or local control inside that section. Never use the answer text as sectionNeedle.',
     'For question-like or option-like sections that contain radios, checkboxes, or labels, prefer clickWithinSection. Use fillWithinSection only for actual text/select/editable fields that need values typed or selected.',
     'Before searching the web, use the current page context, pageSummary, pageDomOutline, pageDomSnapshot, pageInteractMap, pageTestDigest, pageDigest, site memory, and your own knowledge. Do not leave the current page to search for information unless the user explicitly asks you to search the web or the answer truly requires external lookup.',
     'When browser actions are needed, return ONLY valid JSON with this shape: {"assistant_text":"...","actions":[{"action":"...","params":{}}],"done":false}. Do not add markdown, code fences, or extra prose around the JSON.',
@@ -4478,7 +4479,23 @@ async function handleCommand(command) {
         }
         if (payload.mode === 'click' || payload.commandName === 'clickWithinSection') {
           const controlNeedle = lower(payload.controlNeedle || payload.control || payload.intent || payload.needle || '');
+          const sectionNeedleForClick = lower(payload.sectionNeedle || '');
           const controlIndex = Number.isFinite(Number(payload.controlIndex ?? payload.index)) ? Number(payload.controlIndex ?? payload.index) : null;
+          if (!sectionNeedleForClick) {
+            return {
+              ok: false,
+              reason: 'clickWithinSection requires sectionNeedle so the action stays inside a specific visible section.',
+              controls: sectionSummary.controls,
+            };
+          }
+          if (controlNeedle && sectionNeedleForClick === controlNeedle) {
+            return {
+              ok: false,
+              reason: 'sectionNeedle matches controlNeedle. sectionNeedle should name the section or question, while controlNeedle should name the local option to click.',
+              section: sectionSummary.section,
+              controls: sectionSummary.controls,
+            };
+          }
           const scored = sectionControls.map((el, idx) => {
             const summary = summarizeControl(el, idx, sectionEl);
             const hay = lower([
@@ -4605,8 +4622,10 @@ async function handleCommand(command) {
           reason: `Unsupported section mode: ${payload.mode || payload.commandName || 'unknown'}`,
         };
       }, [{
-        sectionNeedle: params.sectionNeedle || params.section_needle || params.sectionSelector || params.section_selector || params.needle || params.section || params.heading || null,
-        controlNeedle: params.controlNeedle || params.control_needle || params.controlSelector || params.control_selector || params.control || null,
+        sectionNeedle: normalizedAction === 'clickWithinSection' || normalizedAction === 'fillWithinSection'
+          ? (params.sectionNeedle || params.section_needle || params.sectionSelector || params.section_selector || params.section || params.heading || null)
+          : (params.sectionNeedle || params.section_needle || params.sectionSelector || params.section_selector || params.needle || params.section || params.heading || null),
+        controlNeedle: params.controlNeedle || params.control_needle || params.controlSelector || params.control_selector || params.control || (normalizedAction === 'clickWithinSection' ? params.needle : null) || null,
         controlIndex: params.controlIndex ?? params.control_index ?? null,
         index: params.index ?? null,
         exact: !!params.exact,
