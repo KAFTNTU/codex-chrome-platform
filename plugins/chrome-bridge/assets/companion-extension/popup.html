@@ -343,6 +343,95 @@
       justify-content: space-between;
       gap: 8px;
     }
+    .file-list {
+      display: grid;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .file-card {
+      display: grid;
+      gap: 6px;
+      padding: 8px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #141a22;
+    }
+    .file-card-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .file-card-name {
+      font-size: 12px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+    .file-card-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .file-preview {
+      color: #c7d5e7;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 82px;
+      overflow: auto;
+    }
+    .file-actions {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .file-actions button {
+      flex: 0 0 auto;
+    }
+    .file-pills {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .file-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #121821;
+      color: var(--text);
+      font-size: 11px;
+      max-width: 100%;
+    }
+    .file-pill small {
+      color: var(--muted);
+    }
+    .file-pill button {
+      padding: 0 6px;
+      border-radius: 999px;
+      line-height: 1;
+      font-size: 11px;
+    }
+    .dropzone {
+      border: 1px dashed #44607d;
+      border-radius: 10px;
+      padding: 10px;
+      color: var(--muted);
+      text-align: center;
+      background: rgba(17, 20, 24, 0.4);
+      transition: border-color 0.15s ease, background 0.15s ease;
+      user-select: none;
+    }
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: rgba(31, 62, 88, 0.35);
+      color: var(--text);
+    }
     .danger-action {
       background: #4a1d20;
       border-color: #8c3a40;
@@ -361,6 +450,18 @@
         <button id="clearAssistantChat">Clear chat</button>
       </div>
       <div id="assistantChatList" class="chat-history"></div>
+      <input id="assistantFileInput" class="hidden" type="file" multiple />
+      <div class="row">
+        <div class="sub">Files</div>
+        <div class="inline">
+          <button id="addFilesToChat" class="primary">Attach files to chat</button>
+          <button id="addFilesToArchive">Save files to archive</button>
+          <button id="clearDraftFiles" class="warn">Clear files</button>
+        </div>
+        <div id="assistantDropzone" class="dropzone">Drop files here to add them to the chat draft.</div>
+        <div id="assistantDraftFiles" class="file-list"></div>
+        <div class="tiny">Images are sent as screenshots. Text files, DOCX, PDF, and ZIP files are extracted locally when possible and added to the assistant context.</div>
+      </div>
       <div class="row">
         <div class="sub">What should AI do?</div>
         <textarea id="assistantTask" placeholder="Describe the task for the assistant..."></textarea>
@@ -422,6 +523,16 @@
       <div class="row notice" id="notice"></div>
     </div>
 
+    <div class="details">
+      <summary>Archive <span id="archiveFileCount" class="pill">0</span></summary>
+      <div class="details-body">
+        <div class="inline">
+          <button id="clearArchiveFiles" class="warn">Clear archive</button>
+        </div>
+        <div id="assistantArchiveFiles" class="file-list"></div>
+      </div>
+    </div>
+
     <div id="connectionDetails" class="card hidden">
       <div class="title">
         <span>Connection details</span>
@@ -477,6 +588,7 @@
       <div id="commandList" class="list"></div>
     </div>
   </div>
+  <script src="vendor/jszip.min.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

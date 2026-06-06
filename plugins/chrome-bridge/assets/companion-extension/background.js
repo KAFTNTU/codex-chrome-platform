@@ -5,6 +5,8 @@ const MAX_NETWORK_LOG = 120;
 const MAX_CONSOLE_LOG = 120;
 const MAX_SESSION_MEMORY = 80;
 const MAX_RESPONSE_BODY = 200000;
+const MAX_ASSISTANT_ATTACHMENT_TEXT = 12000;
+const MAX_ASSISTANT_ATTACHMENT_ITEMS = 20;
 const HEARTBEAT_ALARM = 'bridge-heartbeat';
 const POLL_ALARM = 'bridge-poll';
 const NATIVE_HOST_NAME = 'com.codex.bridge';
@@ -61,6 +63,8 @@ let macroState = {
 let namedRecipes = {};
 let formProfiles = {};
 let assistantChatLog = [];
+let assistantDraftAttachments = [];
+let assistantArchiveAttachments = [];
 
 async function loadState() {
   const stored = await chrome.storage.local.get([
@@ -73,6 +77,8 @@ async function loadState() {
     'assistantTask',
     'assistantRememberApiKey',
     'assistantChatLog',
+    'assistantDraftAttachments',
+    'assistantArchiveAttachments',
     'namedRecipes',
     'formProfiles',
     'mouseCueEnabled',
@@ -97,6 +103,12 @@ async function loadState() {
   namedRecipes = stored.namedRecipes || {};
   formProfiles = stored.formProfiles || {};
   assistantChatLog = Array.isArray(stored.assistantChatLog) ? stored.assistantChatLog.slice(0, 120) : [];
+  assistantDraftAttachments = Array.isArray(stored.assistantDraftAttachments)
+    ? stored.assistantDraftAttachments.map((item) => sanitizeAssistantAttachment(item)).filter(Boolean).slice(0, MAX_ASSISTANT_ATTACHMENT_ITEMS)
+    : [];
+  assistantArchiveAttachments = Array.isArray(stored.assistantArchiveAttachments)
+    ? stored.assistantArchiveAttachments.map((item) => sanitizeAssistantAttachment(item)).filter(Boolean).slice(0, MAX_ASSISTANT_ATTACHMENT_ITEMS * 5)
+    : [];
   await chrome.storage.local.set({
     clientId: state.clientId,
     serverUrl: state.serverUrl,
@@ -106,6 +118,8 @@ async function loadState() {
     assistantTask: state.assistantTask,
     assistantRememberApiKey: state.assistantRememberApiKey,
     assistantChatLog,
+    assistantDraftAttachments,
+    assistantArchiveAttachments,
     accessProfile: state.accessProfile,
     mouseCueEnabled: state.mouseCueEnabled,
     workspaceGroupId: state.workspaceGroupId,
@@ -177,6 +191,8 @@ function buildAssistantSystemPrompt(context) {
   const pageDigestText = context?.pageDigest?.text
     || context?.pageDigest?.summaryText
     || 'Page digest: unavailable';
+  const attachmentsText = buildAssistantAttachmentBlock(context?.draftAttachments || [], 'Attached draft files');
+  const archiveText = buildAssistantAttachmentBlock(context?.archiveAttachments || [], 'Archived files');
   return [
     'You are Codex, a browser agent running inside a real Chrome/Edge session through Chrome Bridge.',
     'You can help the user with browser tasks in their personal browser session, including opening pages, reading page content, finding controls, filling forms, scrolling, clicking visible controls, focusing fields, hovering, and explaining what to do next.',
@@ -192,6 +208,7 @@ function buildAssistantSystemPrompt(context) {
     'If the request is simple and does not require browser actions, answer directly with assistant_text and set done=true.',
     'Assume the bridge can act on the real browser when appropriate. If a step is sensitive, destructive, login-related, or submit-related, ask for confirmation before proceeding.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
+    'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
     'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
@@ -201,6 +218,8 @@ function buildAssistantSystemPrompt(context) {
     `Interact map: ${pageInteractText}`,
     `Test digest: ${pageTestText}`,
     `Page digest: ${pageDigestText}`,
+    attachmentsText,
+    archiveText,
   ].join('\n');
 }
 
@@ -836,6 +855,89 @@ function pushAssistantChat(entry) {
     at: new Date().toISOString(),
     ...entry,
   }, ...assistantChatLog].slice(0, 120);
+}
+
+function truncateText(value, limit = MAX_ASSISTANT_ATTACHMENT_TEXT) {
+  const text = String(value || '');
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes) || 0;
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function sanitizeAssistantAttachment(item) {
+  if (!item || typeof item !== 'object') return null;
+  const id = String(item.id || crypto.randomUUID());
+  const name = String(item.name || 'attachment').trim();
+  if (!name) return null;
+  const size = Number(item.size) || 0;
+  const type = String(item.type || '').trim();
+  const lastModified = Number(item.lastModified) || Date.now();
+  const kind = String(item.kind || '').trim() || (type.startsWith('image/') ? 'image' : (type.startsWith('text/') ? 'text' : 'binary'));
+  const text = typeof item.text === 'string' ? truncateText(item.text) : '';
+  const preview = typeof item.preview === 'string' ? truncateText(item.preview, 2000) : '';
+  const dataUrl = typeof item.dataUrl === 'string' ? item.dataUrl : '';
+  const source = String(item.source || 'chat').trim() === 'archive' ? 'archive' : 'chat';
+  return {
+    id,
+    name,
+    size,
+    type,
+    lastModified,
+    kind,
+    text,
+    preview,
+    dataUrl,
+    source,
+    addedAt: item.addedAt || new Date().toISOString(),
+  };
+}
+
+function describeAssistantAttachment(attachment) {
+  const meta = `${attachment.name} (${formatBytes(attachment.size)}${attachment.type ? `, ${attachment.type}` : ''})`;
+  const text = String(attachment.text || attachment.preview || '').trim();
+  if (!text) return meta;
+  return `${meta}\n${truncateText(text, 2500)}`;
+}
+
+function buildAssistantAttachmentBlock(items, label) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  if (!list.length) return `${label}: none`;
+  const lines = list.map((item, index) => `${index + 1}. ${describeAssistantAttachment(item)}`);
+  return `${label}:\n${lines.join('\n\n')}`;
+}
+
+function buildAssistantTaskMessage(task, attachments) {
+  const list = Array.isArray(attachments) ? attachments.filter(Boolean) : [];
+  const textParts = [String(task || '').trim()];
+  const imageParts = [];
+  const attachmentNotes = [];
+  for (const item of list) {
+    const meta = `${item.name || 'attachment'} (${formatBytes(item.size)}${item.type ? `, ${item.type}` : ''})`;
+    const isImage = String(item.type || '').startsWith('image/') && typeof item.dataUrl === 'string' && item.dataUrl.startsWith('data:image/');
+    const contentText = String(item.text || item.preview || '').trim();
+    if (isImage) {
+      imageParts.push({ type: 'image_url', image_url: { url: item.dataUrl } });
+      attachmentNotes.push(`${meta} [image attached]`);
+    } else if (contentText) {
+      attachmentNotes.push(`${meta}\n${truncateText(contentText, 4000)}`);
+    } else {
+      attachmentNotes.push(`${meta} [no text preview]`);
+    }
+  }
+  if (attachmentNotes.length) {
+    textParts.push(`Attached files:\n${attachmentNotes.join('\n\n')}`);
+  }
+  const textMessage = textParts.filter(Boolean).join('\n\n').trim();
+  if (!imageParts.length) return textMessage;
+  return [
+    { type: 'text', text: textMessage },
+    ...imageParts,
+  ];
 }
 
 function recordSessionEvent(tabId, action, details = {}) {
@@ -6183,6 +6285,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         assistantTask: state.assistantTask,
         assistantRememberApiKey: state.assistantRememberApiKey,
         assistantChatLog,
+        assistantDraftAttachments,
+        assistantArchiveAttachments,
         accessProfile: state.accessProfile,
         mouseCueEnabled: state.mouseCueEnabled,
         bridgeState: state,
@@ -6244,7 +6348,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type === 'popup-run-assistant-task') {
       const assistantTask = String(message.assistantTask ?? state.assistantTask ?? '').trim();
       if (assistantTask) {
-        pushAssistantChat({ role: 'user', text: assistantTask });
+        pushAssistantChat({
+          role: 'user',
+          text: assistantTask,
+          attachments: assistantDraftAttachments.map((item) => ({ ...item })),
+        });
         pushCommandLog({
           action: 'assistantTask',
           paramsPreview: assistantTask.length > 180 ? `${assistantTask.slice(0, 177)}...` : assistantTask,
@@ -6266,6 +6374,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             pageInteract: browserContext.pageInteract,
             pageTestDigest: browserContext.pageTestDigest,
             pageDigest: browserContext.pageDigest,
+            draftAttachments: assistantDraftAttachments.map((item) => ({ ...item })),
+            archiveAttachments: assistantArchiveAttachments.map((item) => ({ ...item })),
           };
           const conversation = [
             {
@@ -6274,7 +6384,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             },
             {
               role: 'user',
-              content: assistantTask,
+              content: buildAssistantTaskMessage(assistantTask, assistantDraftAttachments),
             },
           ];
           const assistantActionResults = [];
@@ -6368,6 +6478,94 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       assistantChatLog = [];
       await chrome.storage.local.set({ assistantChatLog });
       sendResponse({ ok: true, assistantChatLog });
+      return;
+    }
+    if (message?.type === 'popup-add-assistant-files') {
+      const destination = String(message.destination || 'draft').trim() === 'archive' ? 'archive' : 'draft';
+      const items = Array.isArray(message.attachments)
+        ? message.attachments.map((item) => sanitizeAssistantAttachment(item)).filter(Boolean)
+        : [];
+      if (!items.length) {
+        sendResponse({
+          ok: true,
+          assistantDraftAttachments,
+          assistantArchiveAttachments,
+        });
+        return;
+      }
+      if (destination === 'archive') {
+        assistantArchiveAttachments = [...items, ...assistantArchiveAttachments]
+          .slice(0, MAX_ASSISTANT_ATTACHMENT_ITEMS * 5);
+      } else {
+        assistantDraftAttachments = [...items, ...assistantDraftAttachments]
+          .slice(0, MAX_ASSISTANT_ATTACHMENT_ITEMS);
+      }
+      await chrome.storage.local.set({
+        assistantDraftAttachments,
+        assistantArchiveAttachments,
+      });
+      sendResponse({
+        ok: true,
+        assistantDraftAttachments,
+        assistantArchiveAttachments,
+      });
+      return;
+    }
+    if (message?.type === 'popup-remove-assistant-file') {
+      const destination = String(message.destination || 'draft').trim() === 'archive' ? 'archive' : 'draft';
+      const id = String(message.id || '').trim();
+      if (id) {
+        if (destination === 'archive') {
+          assistantArchiveAttachments = assistantArchiveAttachments.filter((item) => item.id !== id);
+        } else {
+          assistantDraftAttachments = assistantDraftAttachments.filter((item) => item.id !== id);
+        }
+        await chrome.storage.local.set({
+          assistantDraftAttachments,
+          assistantArchiveAttachments,
+        });
+      }
+      sendResponse({
+        ok: true,
+        assistantDraftAttachments,
+        assistantArchiveAttachments,
+      });
+      return;
+    }
+    if (message?.type === 'popup-copy-assistant-archive-file') {
+      const id = String(message.id || '').trim();
+      const item = assistantArchiveAttachments.find((entry) => entry.id === id);
+      if (item) {
+        assistantDraftAttachments = [{ ...item, source: 'chat' }, ...assistantDraftAttachments]
+          .slice(0, MAX_ASSISTANT_ATTACHMENT_ITEMS);
+        await chrome.storage.local.set({
+          assistantDraftAttachments,
+          assistantArchiveAttachments,
+        });
+      }
+      sendResponse({
+        ok: true,
+        assistantDraftAttachments,
+        assistantArchiveAttachments,
+      });
+      return;
+    }
+    if (message?.type === 'popup-clear-assistant-files') {
+      const destination = String(message.destination || 'draft').trim() === 'archive' ? 'archive' : 'draft';
+      if (destination === 'archive') {
+        assistantArchiveAttachments = [];
+      } else {
+        assistantDraftAttachments = [];
+      }
+      await chrome.storage.local.set({
+        assistantDraftAttachments,
+        assistantArchiveAttachments,
+      });
+      sendResponse({
+        ok: true,
+        assistantDraftAttachments,
+        assistantArchiveAttachments,
+      });
       return;
     }
     if (message?.type === 'popup-save-access-profile') {
