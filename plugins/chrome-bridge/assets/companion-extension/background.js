@@ -4567,13 +4567,23 @@ async function handleCommand(command) {
         const findSection = () => {
           if (!sectionNeedle) return null;
           const sectionNeedleCanonical = canonical(sectionNeedle);
+          const extractQuestionNumber = (text) => {
+            const match = String(text || '').match(/\b(\d{1,3})\b/);
+            return match ? Number(match[1]) : null;
+          };
+          const sectionQuestionNumber = extractQuestionNumber(sectionNeedle);
           const anchors = Array.from(document.querySelectorAll(anchorQuery)).filter(visible);
           const candidates = [];
           for (const anchor of anchors) {
             const anchorText = lower(anchor.innerText || anchor.textContent || '');
             const anchorCanonical = canonical(anchorText);
+            const anchorQuestionNumber = extractQuestionNumber(anchorText);
             if (!anchorText) continue;
             let score = 0;
+            if (sectionQuestionNumber != null && anchorQuestionNumber != null) {
+              if (sectionQuestionNumber !== anchorQuestionNumber) continue;
+              score += 7000;
+            }
             if (anchorText === sectionNeedle) score += 5000;
             if (anchorText.startsWith(sectionNeedle)) score += 2500;
             if (anchorText.includes(sectionNeedle)) score += 1500;
