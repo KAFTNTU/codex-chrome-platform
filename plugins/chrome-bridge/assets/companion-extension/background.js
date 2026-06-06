@@ -560,10 +560,20 @@ function summarizeAssistantActions(results = []) {
     const action = entry?.action || 'action';
     const ok = entry?.result?.ok !== false;
     const stateText = ok ? 'ok' : 'error';
+    const selected = entry?.result?.verification?.sectionSelection;
+    const clicked = entry?.result?.clicked;
+    const selectionDetail = selected?.label
+      ? `selected=${selected.label}`
+      : selected?.selector
+        ? `selected=${selected.selector}`
+        : '';
+    const clickedDetail = clicked?.label || clicked?.ariaLabel || clicked?.text || '';
     const detail = entry?.result?.error
       || entry?.result?.message
       || entry?.result?.reason
       || entry?.result?.status
+      || selectionDetail
+      || (clickedDetail ? `clicked=${clickedDetail}` : '')
       || '';
     return `${index + 1}. ${action}: ${stateText}${detail ? ` (${detail})` : ''}`;
   }).join('\n');
@@ -4754,6 +4764,11 @@ async function handleCommand(command) {
               sectionVerified = false;
               sectionReason = 'The section still has "Leave unanswered" selected after the click.';
             } else if (controlNeedle) {
+              const sameSelectedElement = Boolean(
+                clickResult.verification?.selector
+                && selectionState.selected.selector
+                && clickResult.verification.selector === selectionState.selected.selector
+              );
               const selectedHay = lower([
                 selectionState.selected.label,
                 selectionState.selected.value,
@@ -4763,7 +4778,7 @@ async function handleCommand(command) {
               const selectedScore = tokenOverlapScore(selectedHay, controlNeedle)
                 + (selectedHay.includes(controlNeedle) ? 600 : 0)
                 + (selectedCanonical.includes(controlNeedleCanonical) ? 550 : 0);
-              if (selectedScore <= 0) {
+              if (!sameSelectedElement && selectedScore <= 0) {
                 sectionVerified = false;
                 sectionReason = `A different option appears selected inside the section: ${selectionState.selected.label || selectionState.selected.selector}`;
               }
@@ -4870,7 +4885,16 @@ async function handleCommand(command) {
         };
       }, [{
         sectionNeedle: normalizedAction === 'clickWithinSection' || normalizedAction === 'fillWithinSection'
-          ? (params.sectionNeedle || params.section_needle || params.sectionSelector || params.section_selector || params.section || params.heading || null)
+          ? (
+            params.sectionNeedle
+            || params.section_needle
+            || params.sectionSelector
+            || params.section_selector
+            || params.section
+            || params.heading
+            || params.question
+            || (params.questionNumber != null || params.question_number != null ? `Запитання ${params.questionNumber ?? params.question_number}` : null)
+          )
           : (params.sectionNeedle || params.section_needle || params.sectionSelector || params.section_selector || params.needle || params.section || params.heading || null),
         controlNeedle: params.controlNeedle || params.control_needle || params.controlSelector || params.control_selector || params.control || (normalizedAction === 'clickWithinSection' ? params.needle : null) || null,
         controlIndex: params.controlIndex ?? params.control_index ?? null,
