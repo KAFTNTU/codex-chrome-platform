@@ -4613,6 +4613,34 @@ async function handleCommand(command) {
         const sectionScopes = sectionMatch.scopes?.length ? sectionMatch.scopes : [sectionEl];
         const primarySectionEl = sectionMatch.primaryScope || sectionEl;
         const sectionControls = sectionMatch.controls.slice(0, maxItems);
+        const getSectionSelectionState = () => {
+          const radios = sectionScopes.flatMap((scope) => Array.from(scope.querySelectorAll('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]')))
+            .filter((el, idx, list) => list.indexOf(el) === idx);
+          const selected = radios.find((el) => {
+            if ('checked' in el) return !!el.checked;
+            return el.getAttribute?.('aria-checked') === 'true';
+          });
+          if (!selected) {
+            return {
+              hasSelectableControls: radios.length > 0,
+              selected: null,
+            };
+          }
+          const label = labelTextFor(selected, primarySectionEl)
+            || norm(selected.closest('label')?.innerText || selected.closest('li, tr, .row, .multichoice-question')?.innerText || '')
+            || norm(selected.getAttribute('aria-label') || '');
+          return {
+            hasSelectableControls: radios.length > 0,
+            selected: {
+              selector: selectorFor(selected),
+              id: selected.id || null,
+              name: selected.getAttribute('name') || null,
+              value: selected.getAttribute('value') || null,
+              label: label.slice(0, 220),
+              isUnanswered: (selected.getAttribute('value') || '') === '-1' || canonical(label).includes(canonical('залишити без відповіді')),
+            },
+          };
+        };
         const sectionSummary = {
           ok: true,
           section: {
@@ -4705,12 +4733,41 @@ async function handleCommand(command) {
             };
           }
           const clickResult = clickWithVerification(chosen);
+          const selectionState = getSectionSelectionState();
+          let sectionVerified = clickResult.ok;
+          let sectionReason = clickResult.reason;
+          if (selectionState.hasSelectableControls) {
+            if (!selectionState.selected) {
+              sectionVerified = false;
+              sectionReason = 'A click was dispatched inside the section, but no option became selected.';
+            } else if (selectionState.selected.isUnanswered) {
+              sectionVerified = false;
+              sectionReason = 'The section still has "Leave unanswered" selected after the click.';
+            } else if (controlNeedle) {
+              const selectedHay = lower([
+                selectionState.selected.label,
+                selectionState.selected.value,
+                selectionState.selected.id,
+              ].filter(Boolean).join(' '));
+              const selectedCanonical = canonical(selectedHay);
+              const selectedScore = tokenOverlapScore(selectedHay, controlNeedle)
+                + (selectedHay.includes(controlNeedle) ? 600 : 0)
+                + (selectedCanonical.includes(controlNeedleCanonical) ? 550 : 0);
+              if (selectedScore <= 0) {
+                sectionVerified = false;
+                sectionReason = `A different option appears selected inside the section: ${selectionState.selected.label || selectionState.selected.selector}`;
+              }
+            }
+          }
           return {
-            ok: clickResult.ok,
-            reason: clickResult.reason,
+            ok: sectionVerified,
+            reason: sectionReason,
             section: sectionSummary.section,
             clicked: summarizeControl(chosen, scored[0]?.idx ?? controlIndex ?? 0, sectionEl),
-            verification: clickResult.verification,
+            verification: {
+              ...clickResult.verification,
+              sectionSelection: selectionState.selected,
+            },
           };
         }
         if (payload.mode === 'fill' || payload.commandName === 'fillWithinSection') {
