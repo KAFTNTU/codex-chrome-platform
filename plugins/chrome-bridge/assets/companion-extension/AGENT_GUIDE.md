@@ -68,6 +68,18 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use the upload assistant only for user-owned completed files.
 - Use preflight before attach/submit when file integrity matters.
 
+## Question-container mode
+
+On pages built from repeated blocks such as `Запитання 1`, `Запитання 2`, and so on, the extension automatically switches to a compact question-scoped mode.
+
+1. Call `pageQuestionMap` once to get only question numbers, local region IDs, control types, and completion state.
+2. Call `pageQuestionMap` with `questionNumber: N` when you need the prompt and controls for one question.
+3. Use `scopeToSection`, `describeSection`, or `listSectionControls` with `sectionNeedle: "Запитання N"`.
+4. Use `clickWithinSection` or `fillWithinSection` only inside that local container.
+5. Verify the local state before moving to the next container.
+
+While this mode is active, global DOM snapshots, global interact maps, and global click/form actions are blocked. This keeps the agent inside the requested question block, reduces token use, and prevents accidental interaction with unrelated page controls. Test completion and submission controls remain blocked.
+
 ## File upload rules
 
 - Files come only from allowed folders or user-selected files.

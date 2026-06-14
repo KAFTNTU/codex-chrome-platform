@@ -193,6 +193,11 @@ function buildAssistantSystemPrompt(context) {
   const pageDigestText = context?.pageDigest?.text
     || context?.pageDigest?.summaryText
     || 'Page digest: unavailable';
+  const questionMapText = context?.pageQuestionMap?.summaryText
+    || context?.pageQuestionMap?.questions?.map?.((question) => {
+      return `Q${question.number}:${question.kind}:${question.answered ? 'answered' : 'unanswered'}`;
+    })?.join?.(' | ')
+    || 'Question map: unavailable';
   const attachmentsText = buildAssistantAttachmentBlock(context?.draftAttachments || [], 'Attached draft files');
   const archiveText = buildAssistantAttachmentBlock(context?.archiveAttachments || [], 'Archived files');
   return [
@@ -203,6 +208,8 @@ function buildAssistantSystemPrompt(context) {
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
     'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
+    'When questionScopedMode is active, the page has already been divided into question:N regions. Do not request or inspect the full-page DOM, full interact map, or body text. Read the compact pageQuestionMap once, then request pageQuestionMap with questionNumber=N only when local details are needed.',
+    'In questionScopedMode, every interaction must stay inside one named question container. Use sectionNeedle such as "Запитання 1" and a separate controlNeedle for the local control. Never fall back to a global click when a scoped action fails.',
     'If the page is large or repetitive, you may save a compact page region with pageRegionMemory or selectPageRegion and then refer to that short region instead of restating the whole page context. Prefer this when you want a tiny prompt footprint.',
     'For section-scoped tools, use params named sectionNeedle and controlNeedle. Avoid old names like sectionSelector or controlSelector when you generate new actions.',
     'For clickWithinSection, sectionNeedle must describe the container heading or question label, while controlNeedle must describe the option or local control inside that section. Never use the answer text as sectionNeedle.',
@@ -223,7 +230,7 @@ function buildAssistantSystemPrompt(context) {
     'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -232,6 +239,8 @@ function buildAssistantSystemPrompt(context) {
     `Interact map: ${pageInteractText}`,
     `Test digest: ${pageTestText}`,
     `Page digest: ${pageDigestText}`,
+    `Question-scoped mode: ${context?.questionScopedMode ? 'active' : 'inactive'}`,
+    `Question map: ${questionMapText}`,
     context?.pageDiff ? `Page diff: ${JSON.stringify(context.pageDiff).slice(0, 1800)}` : '',
     context?.siteMemory ? `Site memory: ${JSON.stringify(context.siteMemory).slice(0, 1800)}` : '',
     attachmentsText,
@@ -450,6 +459,8 @@ function buildAssistantRuntimeContext(browserContext) {
     pageDiff: browserContext?.pageDiff || null,
     siteMemory: browserContext?.siteMemory || null,
     selectedRegion: browserContext?.selectedRegion || null,
+    pageQuestionMap: browserContext?.pageQuestionMap || null,
+    questionScopedMode: !!browserContext?.questionScopedMode,
     draftAttachments: assistantDraftAttachments.map((item) => ({ ...item })),
     archiveAttachments: assistantArchiveAttachments.map((item) => ({ ...item })),
   };
@@ -482,6 +493,7 @@ function buildAssistantLiveContextSnippet(browserContext) {
   const regionText = browserContext?.selectedRegion
     ? `${browserContext.selectedRegion.regionId || browserContext.selectedRegion.selector || 'selected-region'}: ${browserContext.selectedRegion.label || browserContext.selectedRegion.text || ''}`
     : '';
+  const questionMapText = browserContext?.pageQuestionMap?.summaryText || '';
   return [
     activeTab ? `Current page: ${activeTab.title || '(untitled)'} | ${activeTab.url || ''}` : 'Current page: unavailable',
     pageSummaryText ? `Fresh page summary: ${pageSummaryText}` : '',
@@ -490,6 +502,7 @@ function buildAssistantLiveContextSnippet(browserContext) {
     digestText ? `Fresh page digest: ${digestText}` : '',
     diffText ? `Fresh page diff: ${String(diffText).slice(0, 800)}` : '',
     regionText ? `Selected region: ${regionText.slice(0, 300)}` : '',
+    questionMapText ? `Question containers: ${questionMapText.slice(0, 1200)}` : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -512,10 +525,12 @@ function buildAssistantPageFingerprint(browserContext) {
     interact: browserContext?.pageInteract?.interactMap?.slice?.(0, 8) || browserContext?.pageInteract?.controls?.slice?.(0, 8) || [],
     digest: browserContext?.pageDigest?.text || browserContext?.pageDigest?.summaryText || '',
     testDigest: browserContext?.pageTestDigest?.summaryText || '',
+    questionMap: browserContext?.pageQuestionMap?.summaryText || '',
   });
 }
 
 function assistantContextLooksTestLike(browserContext) {
+  if (browserContext?.questionScopedMode || browserContext?.pageQuestionMap?.questions?.length) return true;
   const text = [
     browserContext?.activeTab?.url || '',
     browserContext?.activeTab?.title || '',
@@ -526,6 +541,15 @@ function assistantContextLooksTestLike(browserContext) {
     browserContext?.pageTestDigest?.summaryText || '',
   ].join(' ');
   return /test|quiz|exam|attempt|take_test|my_tests|пройти тест|тест|іспит|екзамен|контроль/i.test(text);
+}
+
+function isGlobalQuestionReadAction(action) {
+  return [
+    'pageDomOutline',
+    'pageDomSnapshot',
+    'pageInteractMap',
+    'pageSectionReader',
+  ].includes(action);
 }
 
 function isTabLeavingAction(action) {
@@ -587,6 +611,9 @@ function normalizeCommandAction(action) {
     pagedomoutline: 'pageDomOutline',
     pagedomsnapshot: 'pageDomSnapshot',
     pagesectionreader: 'pageSectionReader',
+    pagequestionmap: 'pageQuestionMap',
+    questioncontainermap: 'pageQuestionMap',
+    readquestionregion: 'pageQuestionMap',
     scopetosection: 'scopeToSection',
     listsectioncontrols: 'listSectionControls',
     clickwithinsection: 'clickWithinSection',
@@ -672,6 +699,17 @@ async function runAssistantActionPlan(actions = [], tabId = null, completedActio
         });
         continue;
       }
+      if (browserContext?.questionScopedMode && isGlobalQuestionReadAction(normalizedAction)) {
+        results.push({
+          action: step.action,
+          result: {
+            ok: false,
+            blocked: true,
+            reason: 'Blocked full-page inspection because question-scoped mode is active. Use pageQuestionMap with questionNumber, then use section-scoped tools inside that question only.',
+          },
+        });
+        continue;
+      }
       const actionFingerprint = JSON.stringify({
         action: normalizedAction,
         params: {
@@ -721,6 +759,8 @@ async function runAssistantActionPlan(actions = [], tabId = null, completedActio
 
 async function collectAssistantPageContext() {
   const active = await safeActiveTab();
+  let pageQuestionMap = null;
+  let questionScopedMode = false;
   let pageSummary = null;
   let pageOutline = null;
   let pageSnapshot = null;
@@ -732,12 +772,38 @@ async function collectAssistantPageContext() {
   let selectedRegion = null;
   try {
     const response = await post('/api/action', {
+      action: 'pageQuestionMap',
+      params: { tabId: active?.id ?? null, maxQuestions: 100, includeOptions: false },
+    });
+    pageQuestionMap = response?.result || response || null;
+    questionScopedMode = !!pageQuestionMap?.questions?.length;
+  } catch {
+    // Ordinary pages do not need question-scoped mode.
+  }
+  try {
+    const response = await post('/api/action', {
       action: 'pageSummary',
       params: { tabId: active?.id ?? null, maxItems: 10 },
     });
     pageSummary = response?.result || response || null;
   } catch {
     // Ignore pageSummary failures.
+  }
+  if (questionScopedMode) {
+    return {
+      activeTab: active,
+      pageSummary,
+      pageOutline: null,
+      pageSnapshot: null,
+      pageInteract: null,
+      pageTestDigest: null,
+      pageDigest: null,
+      pageDiff: null,
+      siteMemory: null,
+      selectedRegion: null,
+      pageQuestionMap,
+      questionScopedMode: true,
+    };
   }
   try {
     const response = await post('/api/action', {
@@ -987,6 +1053,8 @@ async function collectAssistantPageContext() {
     pageDiff,
     siteMemory,
     selectedRegion,
+    pageQuestionMap,
+    questionScopedMode,
   };
 }
 
@@ -4489,6 +4557,118 @@ async function handleCommand(command) {
           modals,
         };
       }, [{ maxItems: params.maxItems || 14 }], params.tabId ?? null);
+    case 'pageQuestionMap':
+      return await executeInTab((options) => {
+        const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const visible = (el) => {
+          if (!el) return false;
+          const style = window.getComputedStyle(el);
+          const rect = el.getBoundingClientRect();
+          return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+        };
+        const labelFor = (el, root) => {
+          const parts = [];
+          if (el?.id) {
+            for (const label of Array.from(root.querySelectorAll('label'))) {
+              if (label.htmlFor === el.id) parts.push(label.innerText || label.textContent || '');
+            }
+          }
+          const closest = el?.closest?.('label');
+          if (closest) parts.push(closest.innerText || closest.textContent || '');
+          return norm(parts.join(' ') || el?.getAttribute?.('aria-label') || el?.value || '');
+        };
+        const requestedNumber = Number.isFinite(Number(options.questionNumber))
+          ? Number(options.questionNumber)
+          : null;
+        const maxQuestions = Math.max(1, Number(options.maxQuestions || 100));
+        const includeOptions = options.includeOptions !== false || requestedNumber != null;
+        const instructionCandidates = Array.from(document.querySelectorAll('.test_instruction, .question, .prompt, .item-title'))
+          .filter(visible)
+          .map((instruction) => {
+            const heading = instruction.querySelector('h1, h2, h3, h4, h5, h6, legend') || instruction;
+            const headingText = norm(heading.innerText || heading.textContent || '');
+            const match = headingText.match(/(?:Запитання|Question)\s*(\d{1,3})/i);
+            return match ? { instruction, heading, headingText, number: Number(match[1]) } : null;
+          })
+          .filter(Boolean)
+          .filter((item) => requestedNumber == null || item.number === requestedNumber);
+        const instructions = Array.from(new Map(
+          instructionCandidates.map((item) => [item.number, item]),
+        ).values()).slice(0, maxQuestions);
+        const questions = instructions.map((item) => {
+          const scopes = [];
+          let sibling = item.instruction.nextElementSibling;
+          let guard = 0;
+          while (sibling && guard < 8) {
+            guard += 1;
+            if (sibling.matches?.('.test_instruction, .question, .prompt, .item-title')) break;
+            if (visible(sibling)) scopes.push(sibling);
+            sibling = sibling.nextElementSibling;
+          }
+          const roots = scopes.length ? scopes : [item.instruction];
+          const controls = roots.flatMap((root) => Array.from(root.querySelectorAll('input, select, textarea, button, [contenteditable="true"], [role="radio"], [role="checkbox"]')))
+            .filter((el, index, list) => visible(el) && list.indexOf(el) === index);
+          const prompts = roots.flatMap((root) => Array.from(root.querySelectorAll('p, legend, [role="radiogroup"], [role="group"]')))
+            .map((el) => norm(el.getAttribute('aria-label') || el.innerText || el.textContent || ''))
+            .filter(Boolean);
+          const choiceControls = controls.filter((el) => {
+            const type = String(el.getAttribute('type') || '').toLowerCase();
+            const role = String(el.getAttribute('role') || '').toLowerCase();
+            return type === 'radio' || type === 'checkbox' || role === 'radio' || role === 'checkbox';
+          });
+          const selected = choiceControls.filter((el) => ('checked' in el ? !!el.checked : el.getAttribute('aria-checked') === 'true'));
+          const optionsList = includeOptions ? choiceControls.map((el, index) => {
+            const localRoot = roots.find((root) => root.contains(el)) || roots[0];
+            return {
+            index,
+            label: labelFor(el, localRoot).slice(0, 180),
+            name: el.getAttribute('name') || null,
+            type: el.getAttribute('type') || el.getAttribute('role') || null,
+            checked: 'checked' in el ? !!el.checked : el.getAttribute('aria-checked') === 'true',
+            unanswered: String(el.getAttribute('value') || '') === '-1' || /залишити без відповіді|leave unanswered/i.test(labelFor(el, localRoot)),
+            };
+          }) : [];
+          const groupNames = Array.from(new Set(choiceControls.map((el) => el.getAttribute('name')).filter(Boolean)));
+          const kind = choiceControls.some((el) => String(el.getAttribute('type') || '').toLowerCase() === 'checkbox')
+            ? 'checkbox'
+            : choiceControls.length
+              ? 'radio'
+              : controls.some((el) => ['select', 'textarea'].includes(el.tagName.toLowerCase()) || ['text', 'number'].includes(String(el.getAttribute('type') || '').toLowerCase()))
+                ? 'field'
+                : 'unknown';
+          return {
+            regionId: `question:${item.number}`,
+            number: item.number,
+            heading: item.headingText.slice(0, 180),
+            prompt: (prompts[0] || norm(roots.map((root) => root.innerText || root.textContent || '').join(' '))).slice(0, requestedNumber != null ? 600 : 220),
+            kind,
+            groupNames,
+            controlCount: controls.length,
+            optionCount: choiceControls.length,
+            selected: selected.map((el) => labelFor(el, roots.find((root) => root.contains(el)) || roots[0]).slice(0, 180)),
+            answered: selected.some((el) => String(el.getAttribute('value') || '') !== '-1'),
+            options: optionsList,
+          };
+        });
+        return {
+          ok: questions.length > 0,
+          scoped: questions.length > 0,
+          title: document.title,
+          url: location.href,
+          questionCount: questions.length,
+          availableNumbers: questions.map((question) => question.number),
+          questions,
+          example: {
+            inspect: { action: 'pageQuestionMap', params: { questionNumber: questions[0]?.number || 1 } },
+            click: { action: 'clickWithinSection', params: { sectionNeedle: `Запитання ${questions[0]?.number || 1}`, controlNeedle: '<local control label>' } },
+          },
+          summaryText: questions.map((question) => `Q${question.number}:${question.kind}:${question.answered ? 'answered' : 'unanswered'}`).join(' | '),
+        };
+      }, [{
+        questionNumber: params.questionNumber ?? params.question_number ?? params.number ?? null,
+        maxQuestions: params.maxQuestions || 100,
+        includeOptions: params.includeOptions !== false,
+      }], params.tabId ?? null);
     case 'pageSectionReader':
       return await executeInTab((options) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
