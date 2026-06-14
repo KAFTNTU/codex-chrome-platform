@@ -50,6 +50,7 @@ let consoleState = {
 let sessionMemory = {
   byTab: {},
   pageSnapshotsByTab: {},
+  pageRegionsByTab: {},
 };
 let downloadMemory = {
   recent: [],
@@ -202,9 +203,11 @@ function buildAssistantSystemPrompt(context) {
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
     'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
+    'If the page is large or repetitive, you may save a compact page region with pageRegionMemory or selectPageRegion and then refer to that short region instead of restating the whole page context. Prefer this when you want a tiny prompt footprint.',
     'For section-scoped tools, use params named sectionNeedle and controlNeedle. Avoid old names like sectionSelector or controlSelector when you generate new actions.',
     'For clickWithinSection, sectionNeedle must describe the container heading or question label, while controlNeedle must describe the option or local control inside that section. Never use the answer text as sectionNeedle.',
     'For question-like or option-like sections that contain radios, checkboxes, or labels, prefer clickWithinSection. Use fillWithinSection only for actual text/select/editable fields that need values typed or selected.',
+    'Use pageDiffMemory after an action to check what really changed on the page, and use site memory to remember what you already inspected on this tab.',
     'Do not scroll aggressively by default. First use DOM context, interact maps, and section tools to understand the page. Only scroll when the needed element is not reachable from the current visible area or current DOM cues.',
     'When scrolling is needed, prefer small controlled steps. Use smoothScroll with modest values, for example totalY between 120 and 320 per step, instead of jumping half a page at once.',
     'Before searching the web, use the current page context, pageSummary, pageDomOutline, pageDomSnapshot, pageInteractMap, pageTestDigest, pageDigest, site memory, and your own knowledge. Do not leave the current page to search for information unless the user explicitly asks you to search the web or the answer truly requires external lookup.',
@@ -220,7 +223,7 @@ function buildAssistantSystemPrompt(context) {
     'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, page compare, site memory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: pageSummary, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -229,6 +232,8 @@ function buildAssistantSystemPrompt(context) {
     `Interact map: ${pageInteractText}`,
     `Test digest: ${pageTestText}`,
     `Page digest: ${pageDigestText}`,
+    context?.pageDiff ? `Page diff: ${JSON.stringify(context.pageDiff).slice(0, 1800)}` : '',
+    context?.siteMemory ? `Site memory: ${JSON.stringify(context.siteMemory).slice(0, 1800)}` : '',
     attachmentsText,
     archiveText,
   ].join('\n');
@@ -442,6 +447,9 @@ function buildAssistantRuntimeContext(browserContext) {
     pageInteract: browserContext?.pageInteract || null,
     pageTestDigest: browserContext?.pageTestDigest || null,
     pageDigest: browserContext?.pageDigest || null,
+    pageDiff: browserContext?.pageDiff || null,
+    siteMemory: browserContext?.siteMemory || null,
+    selectedRegion: browserContext?.selectedRegion || null,
     draftAttachments: assistantDraftAttachments.map((item) => ({ ...item })),
     archiveAttachments: assistantArchiveAttachments.map((item) => ({ ...item })),
   };
@@ -468,12 +476,20 @@ function buildAssistantLiveContextSnippet(browserContext) {
   const digestText = browserContext?.pageDigest?.text
     || browserContext?.pageDigest?.summaryText
     || '';
+  const diffText = browserContext?.pageDiff?.diff
+    || browserContext?.pageDiff?.summaryText
+    || '';
+  const regionText = browserContext?.selectedRegion
+    ? `${browserContext.selectedRegion.regionId || browserContext.selectedRegion.selector || 'selected-region'}: ${browserContext.selectedRegion.label || browserContext.selectedRegion.text || ''}`
+    : '';
   return [
     activeTab ? `Current page: ${activeTab.title || '(untitled)'} | ${activeTab.url || ''}` : 'Current page: unavailable',
     pageSummaryText ? `Fresh page summary: ${pageSummaryText}` : '',
     interactText ? `Fresh interact map: ${interactText}` : '',
     testText ? `Fresh test digest: ${testText}` : '',
     digestText ? `Fresh page digest: ${digestText}` : '',
+    diffText ? `Fresh page diff: ${String(diffText).slice(0, 800)}` : '',
+    regionText ? `Selected region: ${regionText.slice(0, 300)}` : '',
   ].filter(Boolean).join('\n');
 }
 
@@ -585,6 +601,15 @@ function normalizeCommandAction(action) {
     semanticid: 'semanticClick',
     finddomcontrol: 'findDomControl',
     pagediffmemory: 'pageDiffMemory',
+    pagediff: 'pageDiffMemory',
+    sitememory: 'siteMemorySnapshot',
+    sitememorysnapshot: 'siteMemorySnapshot',
+    getsitememory: 'siteMemorySnapshot',
+    pageregionmemory: 'pageRegionMemory',
+    pageareamemory: 'pageRegionMemory',
+    selectpageregion: 'pageRegionMemory',
+    selectpagearea: 'pageRegionMemory',
+    rememberpageregion: 'pageRegionMemory',
     pageinteracttype: 'pageInteractType',
     pageinteracthover: 'pageInteractHover',
     pageinteractfocus: 'pageInteractFocus',
@@ -702,6 +727,9 @@ async function collectAssistantPageContext() {
   let pageInteract = null;
   let pageTestDigest = null;
   let pageDigest = null;
+  let pageDiff = null;
+  let siteMemory = null;
+  let selectedRegion = null;
   try {
     const response = await post('/api/action', {
       action: 'pageSummary',
@@ -879,8 +907,8 @@ async function collectAssistantPageContext() {
     }
   }
   if (active?.id != null) {
-    try {
-      pageDigest = await executeInTab(() => {
+  try {
+    pageDigest = await executeInTab(() => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
         const visible = (el) => {
           if (!el) return false;
@@ -927,6 +955,27 @@ async function collectAssistantPageContext() {
       // Ignore direct digest failures.
     }
   }
+  if (active?.id != null) {
+    try {
+      pageDiff = await post('/api/action', {
+        action: 'pageDiffMemory',
+        params: { tabId: active.id },
+      }).then((response) => response?.result || response || null);
+    } catch {
+      // Ignore pageDiffMemory failures.
+    }
+  }
+  if (active?.id != null) {
+    try {
+      siteMemory = await post('/api/action', {
+        action: 'siteMemorySnapshot',
+        params: { tabId: active.id },
+      }).then((response) => response?.result || response || null);
+      selectedRegion = siteMemory?.selectedRegion || null;
+    } catch {
+      // Ignore siteMemorySnapshot failures.
+    }
+  }
   return {
     activeTab: active,
     pageSummary,
@@ -935,6 +984,9 @@ async function collectAssistantPageContext() {
     pageInteract,
     pageTestDigest,
     pageDigest,
+    pageDiff,
+    siteMemory,
+    selectedRegion,
   };
 }
 
@@ -1200,10 +1252,12 @@ function clearSessionMemory(tabId = null) {
   if (tabId != null) {
     delete sessionMemory.byTab[String(tabId)];
     delete sessionMemory.pageSnapshotsByTab[String(tabId)];
+    delete sessionMemory.pageRegionsByTab[String(tabId)];
     return { cleared: true, tabId: Number(tabId) };
   }
   sessionMemory.byTab = {};
   sessionMemory.pageSnapshotsByTab = {};
+  sessionMemory.pageRegionsByTab = {};
   return { cleared: true, allTabs: true };
 }
 
@@ -1217,6 +1271,54 @@ function getPageSnapshotMemory(tabId = null) {
 function setPageSnapshotMemory(tabId, snapshot) {
   if (tabId == null) return;
   sessionMemory.pageSnapshotsByTab[String(tabId)] = snapshot;
+}
+
+function getPageRegionMemory(tabId = null) {
+  if (tabId != null) {
+    return sessionMemory.pageRegionsByTab[String(tabId)] || null;
+  }
+  return sessionMemory.pageRegionsByTab;
+}
+
+function setPageRegionMemory(tabId, region) {
+  if (tabId == null) return null;
+  const key = String(tabId);
+  if (!region) {
+    delete sessionMemory.pageRegionsByTab[key];
+    return null;
+  }
+  sessionMemory.pageRegionsByTab[key] = region;
+  return region;
+}
+
+function clearPageRegionMemory(tabId = null) {
+  if (tabId != null) {
+    delete sessionMemory.pageRegionsByTab[String(tabId)];
+    return { cleared: true, tabId: Number(tabId) };
+  }
+  sessionMemory.pageRegionsByTab = {};
+  return { cleared: true, allTabs: true };
+}
+
+function compactSiteMemory(tabId = null) {
+  const tabKey = tabId != null ? String(tabId) : null;
+  const events = tabKey ? (sessionMemory.byTab[tabKey] || []) : [];
+  const snapshot = tabKey ? (sessionMemory.pageSnapshotsByTab[tabKey] || null) : null;
+  const region = tabKey ? (sessionMemory.pageRegionsByTab[tabKey] || null) : null;
+  const compactSnapshot = snapshot ? {
+    title: snapshot.title || null,
+    url: snapshot.url || null,
+    headingTexts: Array.isArray(snapshot.headingTexts) ? snapshot.headingTexts.slice(0, 8) : [],
+    controlSignatures: Array.isArray(snapshot.controlSignatures) ? snapshot.controlSignatures.slice(0, 12) : [],
+    modalSignatures: Array.isArray(snapshot.modalSignatures) ? snapshot.modalSignatures.slice(0, 6) : [],
+    activeElement: snapshot.activeElement || null,
+  } : null;
+  return {
+    tabId: tabKey != null ? Number(tabKey) : null,
+    recentEvents: events.slice(0, 12),
+    pageSnapshot: compactSnapshot,
+    selectedRegion: region || null,
+  };
 }
 
 function getFormProfiles() {
@@ -5805,6 +5907,161 @@ async function handleCommand(command) {
           diff,
         };
       }, [{ tabId: await resolveTargetTabId(params.tabId ?? null) }], params.tabId ?? null);
+    case 'siteMemorySnapshot':
+      return {
+        ok: true,
+        ...compactSiteMemory(await resolveTargetTabId(params.tabId ?? null)),
+      };
+    case 'pageRegionMemory':
+      return await (async () => {
+        const tabId = await resolveTargetTabId(params.tabId ?? null);
+        const mode = String(params.mode || params.action || params.command || 'remember').toLowerCase();
+        if (mode === 'read' || mode === 'get') {
+          return {
+            ok: true,
+            tabId,
+            region: getPageRegionMemory(tabId),
+          };
+        }
+        if (mode === 'clear' || mode === 'forget' || mode === 'remove') {
+          return {
+            ok: true,
+            ...clearPageRegionMemory(tabId),
+          };
+        }
+        const resolveNeedle = String(params.selector || params.needle || params.regionNeedle || params.label || '').trim();
+        const useSelection = mode === 'selection' || mode === 'captureselection' || params.captureSelection === true;
+        const region = await executeInTab((options) => {
+          const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+          const lower = (value) => norm(value).toLowerCase();
+          const visible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+          };
+          const selectorFor = (el) => {
+            if (!el) return null;
+            if (el.id) return `#${CSS.escape(el.id)}`;
+            const name = el.getAttribute('name');
+            if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+            const aria = el.getAttribute('aria-label');
+            if (aria) return `${el.tagName.toLowerCase()}[aria-label="${CSS.escape(aria.slice(0, 40))}"]`;
+            const role = el.getAttribute('role');
+            if (role) return `${el.tagName.toLowerCase()}[role="${CSS.escape(role)}"]`;
+            return el.tagName.toLowerCase();
+          };
+          const makeRegion = (el, source = 'selector') => {
+            if (!el || !visible(el)) return null;
+            const rect = el.getBoundingClientRect();
+            const label = norm([
+              el.getAttribute('aria-label'),
+              el.getAttribute('title'),
+              el.getAttribute('placeholder'),
+              el.innerText,
+              el.textContent,
+            ].filter(Boolean).join(' ')).slice(0, 220);
+            const controls = el.querySelectorAll?.('a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="radio"], [role="checkbox"]')?.length || 0;
+            return {
+              source,
+              title: document.title || '',
+              url: location.href,
+              selector: selectorFor(el),
+              tag: el.tagName.toLowerCase(),
+              role: el.getAttribute('role') || null,
+              name: el.getAttribute('name') || null,
+              id: el.id || null,
+              text: norm(el.innerText || el.textContent || el.value || '').slice(0, 320),
+              label,
+              ariaLabel: norm(el.getAttribute('aria-label') || '').slice(0, 220) || null,
+              x: Math.round(rect.left),
+              y: Math.round(rect.top),
+              width: Math.round(rect.width),
+              height: Math.round(rect.height),
+              controls,
+            };
+          };
+          const query = String(options.query || '').trim();
+          const index = Number.isFinite(Number(options.index)) ? Number(options.index) : null;
+          if (options.useSelection) {
+            const selection = window.getSelection?.();
+            if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+              return { ok: false, reason: 'No current text selection to capture' };
+            }
+            const range = selection.getRangeAt(0);
+            const rect = range.getBoundingClientRect?.();
+            const parent = range.commonAncestorContainer?.nodeType === Node.ELEMENT_NODE
+              ? range.commonAncestorContainer
+              : range.commonAncestorContainer?.parentElement;
+            const target = parent && visible(parent) ? parent : document.activeElement || document.body;
+            const region = makeRegion(target, 'selection');
+            return {
+              ok: !!region,
+              region: region ? {
+                ...region,
+                selectionText: norm(selection.toString()).slice(0, 400),
+                x: Math.round(rect?.left || region.x || 0),
+                y: Math.round(rect?.top || region.y || 0),
+                width: Math.round(rect?.width || region.width || 0),
+                height: Math.round(rect?.height || region.height || 0),
+              } : null,
+            };
+          }
+          const candidates = Array.from(document.querySelectorAll('main, article, section, form, fieldset, li, tr, div, aside, nav'))
+            .filter(visible);
+          const interactive = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [contenteditable="true"], [role="button"], [role="link"], [role="radio"], [role="checkbox"], summary, label'))
+            .filter(visible);
+          const pool = interactive.length ? interactive : candidates;
+          let chosen = null;
+          if (index != null && index >= 0 && index < pool.length) {
+            chosen = pool[index];
+          }
+          if (!chosen && query) {
+            const queryLower = lower(query);
+            chosen = pool.map((el) => {
+              const hay = lower([
+                el.innerText,
+                el.textContent,
+                el.value,
+                el.getAttribute('aria-label'),
+                el.getAttribute('placeholder'),
+                el.getAttribute('title'),
+                el.getAttribute('name'),
+                el.id,
+              ].filter(Boolean).join(' '));
+              let score = 0;
+              if (hay === queryLower) score += 1000;
+              if (hay.startsWith(queryLower)) score += 700;
+              if (hay.includes(queryLower)) score += 500;
+              return { el, score };
+            }).sort((a, b) => b.score - a.score)[0]?.el || null;
+          }
+          if (!chosen && document.activeElement && visible(document.activeElement)) {
+            chosen = document.activeElement;
+          }
+          const region = makeRegion(chosen, index != null ? 'index' : query ? 'query' : 'active');
+          return {
+            ok: !!region,
+            region,
+          };
+        }, [{
+          query: resolveNeedle,
+          index: params.index,
+          useSelection,
+        }], tabId);
+        if (region?.ok === false || !region?.region) {
+          return region;
+        }
+        const stored = {
+          ...region.region,
+          regionId: `${tabId}-${Date.now()}`,
+        };
+        setPageRegionMemory(tabId, stored);
+        return {
+          ok: true,
+          region: stored,
+        };
+      })();
     case 'resolveDomRoute':
       return await executeInTab((options) => {
         const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();

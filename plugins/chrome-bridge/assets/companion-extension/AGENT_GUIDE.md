@@ -51,6 +51,10 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `pageIntentMap` when you want a quick semantic map of visible controls.
 - Use `pageInteractMap` when you want a numbered interaction view of the current page.
 - Use `pageInteractClick` when you want to click a visible control by index, intent, or needle.
+- Use `pageDiffMemory` after a click, scroll, or fill to verify what actually changed on the page.
+- Use `siteMemorySnapshot` or `getSiteMemory` when you want a compact memory of what was already inspected on this tab.
+- Use `pageRegionMemory` or `selectPageRegion` when you want to lock onto one visible area or selected element and refer to it with a short stored region instead of restating the whole page.
+- Use `pageRegionMemory` with a selector, visible text needle, or captured text selection when you want the AI to focus on a smaller page area and spend fewer tokens.
 - Use `ocrFromScreenshot` when text is baked into images, canvas, or non-DOM UI.
 - Use `visualPageCompare` when you want to see whether the page visually changed between screenshots.
 - Use `screenshot` or `elementScreenshot` when layout matters.
