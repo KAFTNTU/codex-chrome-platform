@@ -210,6 +210,8 @@ function buildAssistantSystemPrompt(context) {
     'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
     'When questionScopedMode is active, the page has already been divided into question:N regions. Do not request or inspect the full-page DOM, full interact map, or body text. Read the compact pageQuestionMap once, then request pageQuestionMap with questionNumber=N only when local details are needed.',
     'In questionScopedMode, every interaction must stay inside one named question container. Use sectionNeedle such as "Запитання 1" and a separate controlNeedle for the local control. Never fall back to a global click when a scoped action fails.',
+    'Never use a positional guessing strategy such as choosing the first option, the same option, or a fixed option index across multiple questions. Do not say that you will choose the first option in every question.',
+    'In questionScopedMode, inspect and handle at most one question per step. Before clickWithinSection, explain the local choice in assistant_text and include a specific params.rationale. A bare position such as "first option" is not a rationale. After the click, verify the selected state before moving to another question.',
     'If the page is large or repetitive, you may save a compact page region with pageRegionMemory or selectPageRegion and then refer to that short region instead of restating the whole page context. Prefer this when you want a tiny prompt footprint.',
     'For section-scoped tools, use params named sectionNeedle and controlNeedle. Avoid old names like sectionSelector or controlSelector when you generate new actions.',
     'For clickWithinSection, sectionNeedle must describe the container heading or question label, while controlNeedle must describe the option or local control inside that section. Never use the answer text as sectionNeedle.',
@@ -576,6 +578,25 @@ function isUnsafeGlobalTestAction(action) {
   ].includes(action);
 }
 
+function questionChoiceGuardReason(actions = [], assistantText = '', browserContext = null) {
+  if (!browserContext?.questionScopedMode) return '';
+  const scopedClicks = actions.filter((step) => normalizeCommandAction(step?.action || '') === 'clickWithinSection');
+  if (!scopedClicks.length) return '';
+  const text = String(assistantText || '').toLowerCase();
+  const positionalPattern = /(?:перш(?:ий|у|ого)\s+(?:варіант|відповід)|перш(?:ий|у)\s+у\s+(?:списку|кожному)|однаков(?:ий|у)\s+(?:варіант|відповід)|first\s+(?:option|answer)|same\s+(?:option|answer)|option\s*(?:number|#)?\s*1\b)/i;
+  if (positionalPattern.test(text)) {
+    return 'Blocked blind positional selection. Inspect one question and justify the specific local choice instead of choosing the first or same option.';
+  }
+  if (scopedClicks.length > 1) {
+    return 'Blocked bulk question selection. Question-scoped mode allows only one clickWithinSection choice per step, followed by verification.';
+  }
+  const rationale = String(scopedClicks[0]?.params?.rationale || scopedClicks[0]?.params?.reason || '').trim();
+  if (rationale.length < 20 || positionalPattern.test(rationale)) {
+    return 'Blocked unsupported question choice. Add a specific params.rationale for this one local choice; an option position is not sufficient.';
+  }
+  return '';
+}
+
 function normalizeCommandAction(action) {
   const raw = String(action || '').trim();
   if (!raw) return '';
@@ -671,9 +692,20 @@ function summarizeAssistantActions(results = []) {
   }).join('\n');
 }
 
-async function runAssistantActionPlan(actions = [], tabId = null, completedActionFingerprints = null, browserContext = null) {
+async function runAssistantActionPlan(actions = [], tabId = null, completedActionFingerprints = null, browserContext = null, assistantText = '') {
   const results = [];
   const testLikeContext = assistantContextLooksTestLike(browserContext);
+  const questionGuardReason = questionChoiceGuardReason(actions, assistantText, browserContext);
+  if (questionGuardReason) {
+    return actions.map((step) => ({
+      action: step?.action || 'action',
+      result: {
+        ok: false,
+        blocked: true,
+        reason: questionGuardReason,
+      },
+    }));
+  }
   for (const step of actions.slice(0, 12)) {
     try {
       const normalizedAction = normalizeCommandAction(step?.action || '');
@@ -7905,15 +7937,21 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             const completionText = extractAssistantTextFromCompletion(completion);
             const parsedPlan = normalizeAssistantPlan(parseAssistantPlan(completionText));
             const assistantText = parsedPlan?.assistantText || completionText || 'No response text returned.';
-            assistantReplies.push(assistantText);
-            pushAssistantChat({ role: 'assistant', text: `Step ${stepIndex}: ${assistantText}` });
+            const questionGuardReason = parsedPlan?.actions?.length
+              ? questionChoiceGuardReason(parsedPlan.actions, assistantText, browserContext)
+              : '';
+            const displayedAssistantText = questionGuardReason
+              ? 'План зупинено: не можна механічно вибирати перший або однаковий варіант. Потрібно розглянути одне питання, обґрунтувати конкретну дію та перевірити результат.'
+              : assistantText;
+            assistantReplies.push(displayedAssistantText);
+            pushAssistantChat({ role: 'assistant', text: `Step ${stepIndex}: ${displayedAssistantText}` });
             conversation.push({
               role: 'assistant',
-              content: assistantText,
+              content: displayedAssistantText,
             });
             if (parsedPlan?.actions?.length) {
               const currentActionFingerprint = buildAssistantActionFingerprint(parsedPlan.actions);
-              const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null, completedActionFingerprints, browserContext);
+              const stepResults = await runAssistantActionPlan(parsedPlan.actions, browserContext.activeTab?.id ?? null, completedActionFingerprints, browserContext, assistantText);
               assistantActionResults.push(...stepResults);
               lastExecutionSummary = summarizeAssistantActions(stepResults);
               browserContext = await collectAssistantPageContext();

@@ -80,6 +80,8 @@ On pages built from repeated blocks such as `Запитання 1`, `Запит�
 
 While this mode is active, global DOM snapshots, global interact maps, and global click/form actions are blocked. This keeps the agent inside the requested question block, reduces token use, and prevents accidental interaction with unrelated page controls. Test completion and submission controls remain blocked.
 
+The agent must not bulk-select answers or use a fixed positional rule such as "choose the first option". Only one local question choice is accepted per step, and `clickWithinSection` must include a concrete `rationale`; the bridge then verifies the local state before the agent continues.
+
 ## File upload rules
 
 - Files come only from allowed folders or user-selected files.
