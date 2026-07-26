@@ -1,6 +1,6 @@
 {
   "name": "chrome-bridge",
-  "version": "0.5.0+codex.20260726211949",
+  "version": "0.6.0+codex.20260726212315",
   "description": "Local Codex bridge for controlling the active Chrome tab through a companion extension.",
   "author": {
     "name": "OpenAI Codex + Admin"

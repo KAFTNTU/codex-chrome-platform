@@ -27,7 +27,7 @@ I’m designed for real browser tasks, not just demos:
 - Keep related tabs together in a Codex workspace tab group.
 - Help with guarded file uploads when the file already belongs to you.
 - Work with pages like ATutor, Moodle, GitHub, dashboards, internal tools, and similar web apps.
-- Work inside WordPress and Elementor as a structured editor: wait for the editor, search the Navigator tree, select and move elements, batch-edit settings, duplicate widgets, audit accessibility/layout, test responsive layouts, preview changes, and save only after confirmation.
+- Work inside WordPress and Elementor as a structured editor: create checkpoints, search the Navigator tree, select and move elements, batch-edit settings, compare exact changes, audit all responsive modes, preview changes, and save only after confirmation.
 
 ## WordPress and Elementor
 
@@ -37,12 +37,12 @@ The practical workflow is:
 
 1. Wait for the editor with `chrome_bridge_elementor_wait_ready`, then detect WordPress and the current editor.
 2. Search with `chrome_bridge_elementor_find_elements` when the target is known, or map the compact hierarchy with `chrome_bridge_elementor_navigator`.
-3. Select one widget or container by id, text, type, or map index.
+3. Create a named checkpoint before substantial work, then select one widget or container by id, text, type, or map index.
 4. Edit text, apply one setting, or apply a verified batch with `chrome_bridge_elementor_set_controls`.
 5. Move or duplicate elements, add widgets, and use undo when an experiment does not work.
 6. Run a multi-step plan with `chrome_bridge_elementor_run_workflow`; it can stop on failure, roll back successful mutations, and preview the result.
-7. Run `chrome_bridge_elementor_audit` to find missing alt text, unnamed controls, heading-order problems, duplicate IDs, missing field labels, horizontal overflow, and small hit targets.
-8. Check desktop, tablet, and mobile modes.
+7. Compare the checkpoint to report exactly which elements were added, removed, moved, or changed.
+8. Run `chrome_bridge_elementor_responsive_audit` to check accessibility and layout separately in desktop, tablet, and mobile modes.
 9. Save as draft, update, or publish only after an explicit confirmation.
 
 The workflow can work independently through routine reversible edits without asking after every click. Deleting an Elementor element still requires `confirmDelete: true`, and saving or publishing still requires `confirmSave: true`. Direct preview-DOM edits are intentionally avoided because they would disappear instead of updating Elementor's document model.

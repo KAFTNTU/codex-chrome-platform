@@ -208,6 +208,7 @@ function buildAssistantSystemPrompt(context) {
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
     'When WordPress or Elementor is detected, use elementorWaitReady, wordpressInspect, and elementorNavigator before generic page tools. Use elementorFindElements instead of reading the full tree when the target is known. Treat the Elementor preview iframe and settings panel as one editor, identify elements by stable data-id, and prefer Elementor-specific actions. Use elementorRunWorkflow for multi-step edits so each step is verified and failures can be rolled back, then use elementorAudit to check the result.',
+    'Before substantial Elementor edits, create a named checkpoint. After editing, compare the checkpoint and run elementorResponsiveAudit so you can report exact structural changes and device-specific issues.',
     'For Elementor edits, change one element or control at a time and inspect the result before continuing. Do not mutate preview HTML directly because that does not persist to the Elementor document model.',
     'Never call elementorSave unless the user explicitly asked to save, update, or publish. Pass confirmSave=true only for that explicit request, and keep draft, update, and publish as distinct modes.',
     'Never call elementorDeleteElement unless the user explicitly asked to remove that exact element. Pass confirmDelete=true only for that exact confirmed deletion.',
@@ -236,7 +237,7 @@ function buildAssistantSystemPrompt(context) {
     'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: wordpressInspect, elementorWaitReady, elementorInspect, elementorNavigator, elementorFindElements, elementorAudit, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: wordpressInspect, elementorWaitReady, elementorInspect, elementorNavigator, elementorFindElements, elementorAudit, elementorResponsiveAudit, elementorCreateCheckpoint, elementorCompareCheckpoint, elementorListCheckpoints, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -679,6 +680,12 @@ function normalizeCommandAction(action) {
     elementorfind: 'elementorFindElements',
     elementoraudit: 'elementorAudit',
     auditelementor: 'elementorAudit',
+    elementorresponsiveaudit: 'elementorResponsiveAudit',
+    elementorcreatecheckpoint: 'elementorCreateCheckpoint',
+    elementorcheckpoint: 'elementorCreateCheckpoint',
+    elementorcomparecheckpoint: 'elementorCompareCheckpoint',
+    elementordiffcheckpoint: 'elementorCompareCheckpoint',
+    elementorlistcheckpoints: 'elementorListCheckpoints',
     elementorselectelement: 'elementorSelectElement',
     elementorselectwidget: 'elementorSelectElement',
     elementoredittext: 'elementorEditText',
@@ -4296,6 +4303,139 @@ async function elementorRunWorkflow(params = {}, tabId = null) {
   };
 }
 
+async function elementorResponsiveAudit(params = {}, tabId = null) {
+  const modes = Array.isArray(params.modes) && params.modes.length
+    ? params.modes.map((mode) => String(mode).toLowerCase())
+    : ['desktop', 'tablet', 'mobile'];
+  const supported = new Set(['desktop', 'tablet', 'mobile']);
+  if (modes.some((mode) => !supported.has(mode))) {
+    return { ok: false, error: 'Responsive audit modes must be desktop, tablet, or mobile.' };
+  }
+  const results = [];
+  for (const mode of modes) {
+    const switched = await elementorBridgeAction('elementorResponsiveMode', { mode }, tabId);
+    if (switched?.ok === false) {
+      results.push({ mode, ok: false, switched, audit: null });
+      if (params.stopOnError !== false) break;
+      continue;
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.max(250, Number(params.waitMs || 650))));
+    const audit = await elementorBridgeAction('elementorAudit', {
+      maxIssues: params.maxIssues,
+    }, tabId);
+    results.push({ mode, ok: audit?.ok !== false, switched, audit });
+    if (audit?.ok === false && params.stopOnError !== false) break;
+  }
+  const restoreMode = String(params.restoreMode || 'desktop').toLowerCase();
+  const restored = supported.has(restoreMode)
+    ? await elementorBridgeAction('elementorResponsiveMode', { mode: restoreMode }, tabId)
+    : null;
+  const failed = results.find((entry) => !entry.ok);
+  return {
+    ok: !failed && results.length === modes.length,
+    modes,
+    results,
+    restoredTo: restoreMode,
+    restored,
+    summary: results.map((entry) => ({
+      mode: entry.mode,
+      ok: entry.ok,
+      score: entry.audit?.score ?? null,
+      counts: entry.audit?.counts || null,
+      viewport: entry.audit?.viewport || null,
+    })),
+    error: failed?.audit?.error || failed?.switched?.error || null,
+  };
+}
+
+async function elementorCheckpointAction(operation, params = {}, tabId = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const storage = chrome.storage.session || chrome.storage.local;
+  const prefix = `elementor-checkpoint:${resolvedTabId}:`;
+  const name = String(params.name || 'default').trim() || 'default';
+  const key = `${prefix}${name}`;
+  if (operation === 'elementorListCheckpoints') {
+    const all = await storage.get(null);
+    const checkpoints = Object.entries(all)
+      .filter(([entryKey]) => entryKey.startsWith(prefix))
+      .map(([entryKey, value]) => ({
+        name: entryKey.slice(prefix.length),
+        createdAt: value?.createdAt || null,
+        postId: value?.postId || null,
+        elementCount: value?.tree?.length || 0,
+      }))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+    return { ok: true, tabId: resolvedTabId, checkpoints };
+  }
+  if (operation === 'elementorCreateCheckpoint') {
+    const snapshot = await elementorBridgeAction('elementorNavigator', {
+      maxItems: Math.max(1, Math.min(1000, Number(params.maxItems || 700))),
+      textLimit: Math.max(40, Math.min(500, Number(params.textLimit || 240))),
+    }, resolvedTabId);
+    if (snapshot?.ok === false) return snapshot;
+    const checkpoint = {
+      name,
+      createdAt: new Date().toISOString(),
+      postId: snapshot.postId || null,
+      elementCount: snapshot.elementCount || 0,
+      tree: snapshot.tree || [],
+    };
+    await storage.set({ [key]: checkpoint });
+    return {
+      ok: true,
+      tabId: resolvedTabId,
+      checkpoint: {
+        name,
+        createdAt: checkpoint.createdAt,
+        postId: checkpoint.postId,
+        elementCount: checkpoint.tree.length,
+      },
+    };
+  }
+  if (operation === 'elementorCompareCheckpoint') {
+    const stored = await storage.get(key);
+    const checkpoint = stored[key];
+    if (!checkpoint) return { ok: false, error: `Elementor checkpoint not found: ${name}` };
+    const current = await elementorBridgeAction('elementorNavigator', {
+      maxItems: Math.max(1, Math.min(1000, Number(params.maxItems || 700))),
+      textLimit: Math.max(40, Math.min(500, Number(params.textLimit || 240))),
+    }, resolvedTabId);
+    if (current?.ok === false) return current;
+    const byId = (tree) => new Map((tree || []).filter((item) => item.elementId).map((item) => [item.elementId, item]));
+    const before = byId(checkpoint.tree);
+    const after = byId(current.tree);
+    const added = [];
+    const removed = [];
+    const changed = [];
+    for (const [elementId, item] of after) {
+      if (!before.has(elementId)) {
+        added.push(item);
+        continue;
+      }
+      const previous = before.get(elementId);
+      const fields = ['parentId', 'elementType', 'widgetType', 'text', 'visible'];
+      const differences = fields.filter((field) => previous[field] !== item[field]);
+      if (differences.length) {
+        changed.push({ elementId, fields: differences, before: previous, after: item });
+      }
+    }
+    for (const [elementId, item] of before) {
+      if (!after.has(elementId)) removed.push(item);
+    }
+    return {
+      ok: true,
+      tabId: resolvedTabId,
+      checkpoint: { name, createdAt: checkpoint.createdAt, postId: checkpoint.postId },
+      hasChanges: added.length > 0 || removed.length > 0 || changed.length > 0,
+      counts: { added: added.length, removed: removed.length, changed: changed.length },
+      added,
+      removed,
+      changed,
+    };
+  }
+  return { ok: false, error: `Unsupported Elementor checkpoint operation: ${operation}` };
+}
+
 async function handleCommand(command) {
   const params = command.params || {};
   const normalizedAction = normalizeCommandAction(command.action);
@@ -4390,6 +4530,12 @@ async function handleCommand(command) {
       return await elementorBridgeAction(normalizedAction, params, params.tabId ?? null);
     case 'elementorRunWorkflow':
       return await elementorRunWorkflow(params, params.tabId ?? null);
+    case 'elementorResponsiveAudit':
+      return await elementorResponsiveAudit(params, params.tabId ?? null);
+    case 'elementorCreateCheckpoint':
+    case 'elementorCompareCheckpoint':
+    case 'elementorListCheckpoints':
+      return await elementorCheckpointAction(normalizedAction, params, params.tabId ?? null);
     case 'openAtoModule':
       return await openAtoModule(params.moduleKey || params.module || '', {
         timeoutMs: params.timeoutMs || 18000,

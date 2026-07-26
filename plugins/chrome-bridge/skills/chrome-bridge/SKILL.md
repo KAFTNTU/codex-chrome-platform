@@ -51,6 +51,10 @@ That file explains:
 - `chrome_bridge_elementor_navigator`: return a compact Elementor hierarchy with stable ids and parent relationships
 - `chrome_bridge_elementor_find_elements`: narrowly search Elementor elements without reading the full tree
 - `chrome_bridge_elementor_audit`: check accessibility names, alt text, headings, ids, labels, overflow, and hit targets
+- `chrome_bridge_elementor_responsive_audit`: audit desktop, tablet, and mobile previews and restore the editor mode
+- `chrome_bridge_elementor_create_checkpoint`: store a named session snapshot of the Elementor hierarchy
+- `chrome_bridge_elementor_compare_checkpoint`: report elements added, removed, moved, or changed since a checkpoint
+- `chrome_bridge_elementor_list_checkpoints`: list checkpoints for the active Elementor tab
 - `chrome_bridge_elementor_select_element`: select a widget/container by stable Elementor id or semantic fallback
 - `chrome_bridge_elementor_edit_text`: edit widget text through the real Elementor panel control
 - `chrome_bridge_elementor_set_control`: update a named Elementor setting

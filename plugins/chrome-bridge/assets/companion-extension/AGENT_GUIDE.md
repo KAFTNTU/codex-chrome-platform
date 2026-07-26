@@ -86,6 +86,8 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `elementorUndo` / `elementorRedo` for safe iteration and `elementorPreview` before saving.
 - Use `elementorRunWorkflow` for up to 60 ordered steps. Prefer `stopOnError: true`, `rollbackOnError: true`, and `previewAfter: true`.
 - Use `elementorAudit` after substantial edits. It performs technical accessibility/layout checks without judging content quality.
+- Use `elementorCreateCheckpoint` before a substantial workflow and `elementorCompareCheckpoint` afterward to report exact structural changes.
+- Use `elementorResponsiveAudit` to audit desktop, tablet, and mobile previews in one verified action.
 - Use `elementorSave` only after the user explicitly confirms it. Keep `draft`, `update`, and `publish` as distinct modes and pass `confirmSave: true` only for that confirmed action.
 
 ## Question-container mode
