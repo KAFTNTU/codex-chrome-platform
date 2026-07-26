@@ -27,6 +27,22 @@ I’m designed for real browser tasks, not just demos:
 - Keep related tabs together in a Codex workspace tab group.
 - Help with guarded file uploads when the file already belongs to you.
 - Work with pages like ATutor, Moodle, GitHub, dashboards, internal tools, and similar web apps.
+- Work inside WordPress and Elementor as a structured editor: inspect widgets, select elements, edit settings, test responsive layouts, preview changes, and save only after confirmation.
+
+## WordPress and Elementor
+
+I can treat Elementor as an editor instead of a flat webpage. I read both the settings panel and the live preview iframe, map sections/containers/widgets by stable Elementor `data-id`, and then make changes through the real Elementor controls so they can be saved.
+
+The practical workflow is:
+
+1. Detect WordPress and the current editor with `chrome_bridge_wordpress_inspect`.
+2. Map Elementor elements and panel controls with `chrome_bridge_elementor_inspect`.
+3. Select one widget or container by id, text, type, or map index.
+4. Edit its text or a named Elementor setting, then inspect the result.
+5. Check desktop, tablet, and mobile modes and open preview.
+6. Save as draft, update, or publish only after an explicit confirmation.
+
+Available Elementor tools include selecting widgets, editing text, setting panel controls, adding a widget by drag-and-drop, responsive mode switching, undo/redo, preview, and confirmed save. Direct preview-DOM edits are intentionally avoided because they would disappear instead of updating Elementor's document model.
 
 ## Two access profiles
 
@@ -90,6 +106,18 @@ Common examples:
 - `chrome_bridge_find_dom_control`
 - `chrome_bridge_describe_dom_element`
 - `chrome_bridge_page_summary`
+- `chrome_bridge_wordpress_inspect`
+- `chrome_bridge_elementor_inspect`
+- `chrome_bridge_elementor_select_element`
+- `chrome_bridge_elementor_edit_text`
+- `chrome_bridge_elementor_set_control`
+- `chrome_bridge_elementor_add_widget`
+- `chrome_bridge_elementor_panel_tab`
+- `chrome_bridge_elementor_responsive_mode`
+- `chrome_bridge_elementor_undo`
+- `chrome_bridge_elementor_redo`
+- `chrome_bridge_elementor_preview`
+- `chrome_bridge_elementor_save`
 - `chrome_bridge_page_section_reader`
 - `chrome_bridge_modal_detector`
 - `chrome_bridge_repeated_element_matcher`

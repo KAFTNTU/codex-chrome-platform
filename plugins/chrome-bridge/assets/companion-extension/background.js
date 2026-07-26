@@ -207,6 +207,9 @@ function buildAssistantSystemPrompt(context) {
     'Do not greet the user or start with generic chat like "Hello". If the task is browser-related, immediately work on the page. If the task is unclear, ask one short clarifying question instead of chatting.',
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
+    'When WordPress or Elementor is detected, use wordpressInspect and elementorInspect before generic page tools. Treat the Elementor preview iframe and settings panel as one editor, identify elements by stable data-id, and prefer elementorSelectElement, elementorEditText, elementorPanelTab, elementorSetControl, elementorAddWidget, elementorResponsiveMode, elementorUndo, elementorRedo, and elementorPreview.',
+    'For Elementor edits, change one element or control at a time and inspect the result before continuing. Do not mutate preview HTML directly because that does not persist to the Elementor document model.',
+    'Never call elementorSave unless the user explicitly asked to save, update, or publish. Pass confirmSave=true only for that explicit request, and keep draft, update, and publish as distinct modes.',
     'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
     'When questionScopedMode is active, the page has already been divided into question:N regions. Do not request or inspect the full-page DOM, full interact map, or body text. Read the compact pageQuestionMap once, then request pageQuestionMap with questionNumber=N only when local details are needed.',
     'In questionScopedMode, every interaction must stay inside one named question container. Use sectionNeedle such as "Запитання 1" and a separate controlNeedle for the local control. Never fall back to a global click when a scoped action fails.',
@@ -232,7 +235,7 @@ function buildAssistantSystemPrompt(context) {
     'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: wordpressInspect, elementorInspect, elementorSelectElement, elementorEditText, elementorPanelTab, elementorSetControl, elementorAddWidget, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -663,6 +666,23 @@ function normalizeCommandAction(action) {
     pageinteractfocus: 'pageInteractFocus',
     pagewizardnext: 'pageWizardNext',
     pagewizardprev: 'pageWizardPrev',
+    wordpressinspect: 'wordpressInspect',
+    inspectwordpress: 'wordpressInspect',
+    elementorinspect: 'elementorInspect',
+    inspectelementor: 'elementorInspect',
+    elementorselectelement: 'elementorSelectElement',
+    elementorselectwidget: 'elementorSelectElement',
+    elementoredittext: 'elementorEditText',
+    elementorsetcontrol: 'elementorSetControl',
+    elementoraddwidget: 'elementorAddWidget',
+    elementorpaneltab: 'elementorPanelTab',
+    elementoropenpaneltab: 'elementorPanelTab',
+    elementorresponsive: 'elementorResponsiveMode',
+    elementorresponsivemode: 'elementorResponsiveMode',
+    elementorundo: 'elementorUndo',
+    elementorredo: 'elementorRedo',
+    elementorpreview: 'elementorPreview',
+    elementorsave: 'elementorSave',
   };
   return aliasMap[compact] || aliasMap[lower] || raw;
 }
@@ -3364,6 +3384,439 @@ async function inspectCanvas(maxItems = 5, includeDataUrl = false, tabId = null)
   }).then((items) => items?.[0]?.result);
 }
 
+async function elementorBridgeAction(operation, params = {}, tabId = null) {
+  return await executeInTab(async (payload) => {
+    const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const lower = (value) => norm(value).toLowerCase();
+    const visible = (el) => {
+      if (!el) return false;
+      const style = (el.ownerDocument?.defaultView || window).getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const escapeCss = (value) => {
+      if (window.CSS?.escape) return window.CSS.escape(String(value));
+      return String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
+    };
+    const frame = document.querySelector('#elementor-preview-iframe, iframe[name="elementor-preview-iframe"], iframe.elementor-preview-iframe');
+    let previewDocument = null;
+    try {
+      previewDocument = frame?.contentDocument || frame?.contentWindow?.document || null;
+    } catch {
+      previewDocument = null;
+    }
+    const editorDetected = !!(
+      frame
+      || document.querySelector('#elementor-panel, #elementor-editor-wrapper, #elementor-editor-wrapper-v2')
+      || document.body?.classList?.contains('elementor-editor-active')
+      || location.search.includes('action=elementor')
+      || location.search.includes('elementor-preview=')
+    );
+    const postId = new URL(location.href).searchParams.get('post')
+      || new URL(location.href).searchParams.get('elementor-preview')
+      || document.querySelector('#post_ID')?.value
+      || null;
+    const inspectWordPress = () => ({
+      ok: true,
+      product: 'wordpress',
+      url: location.href,
+      title: document.title,
+      isAdmin: /\/wp-admin(?:\/|$)/i.test(location.pathname) || !!document.body?.className?.match(/wp-admin|wp-core-ui/),
+      isLoggedIn: !!document.querySelector('#wpadminbar, body.logged-in'),
+      editor: editorDetected
+        ? 'elementor'
+        : document.querySelector('.block-editor, .edit-post-layout, .interface-interface-skeleton')
+          ? 'gutenberg'
+          : document.querySelector('#poststuff, #wp-content-editor-container')
+            ? 'classic'
+            : 'unknown',
+      postId,
+      postType: document.querySelector('#post_type')?.value || new URL(location.href).searchParams.get('post_type') || null,
+      hasPreviewFrame: !!frame,
+      previewAccessible: !!previewDocument,
+      capabilities: editorDetected
+        ? ['inspect', 'select-element', 'edit-text', 'set-control', 'add-widget', 'responsive-mode', 'undo-redo', 'preview', 'confirmed-save']
+        : ['inspect-page', 'generic-dom-tools'],
+    });
+    if (payload.operation === 'wordpressInspect') return inspectWordPress();
+    if (!editorDetected) {
+      return { ok: false, error: 'Elementor editor was not detected on the current page.', wordpress: inspectWordPress() };
+    }
+    if (!previewDocument && !['elementorPreview', 'elementorSave', 'elementorResponsiveMode', 'elementorUndo', 'elementorRedo'].includes(payload.operation)) {
+      return { ok: false, error: 'Elementor preview iframe is not accessible yet. Wait for the editor preview to finish loading.' };
+    }
+
+    const elementNodes = () => {
+      if (!previewDocument) return [];
+      return Array.from(previewDocument.querySelectorAll('.elementor-element[data-id], [data-elementor-id]'))
+        .filter((el, index, items) => items.indexOf(el) === index);
+    };
+    const widgetTypeFor = (el) => {
+      const explicit = el.getAttribute('data-widget_type') || el.getAttribute('data-element_type') || '';
+      if (explicit) return explicit;
+      const className = String(el.className || '');
+      return className.match(/(?:^|\s)elementor-widget-([^\s]+)/)?.[1] || 'element';
+    };
+    const describeElement = (el, index) => {
+      const rect = el.getBoundingClientRect();
+      const id = el.getAttribute('data-id') || el.getAttribute('data-elementor-id') || null;
+      const parent = el.parentElement?.closest?.('.elementor-element[data-id], [data-elementor-id]');
+      return {
+        index,
+        elementId: id,
+        elementType: el.getAttribute('data-element_type') || null,
+        widgetType: widgetTypeFor(el),
+        text: norm(el.innerText || el.textContent || '').slice(0, 280),
+        parentId: parent?.getAttribute('data-id') || parent?.getAttribute('data-elementor-id') || null,
+        selected: el.classList.contains('elementor-element-edit-mode') || el.classList.contains('elementor-element--selected'),
+        visible: visible(el),
+        rect: {
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        },
+        selector: id ? `.elementor-element[data-id="${id}"]` : null,
+      };
+    };
+    const resolveElement = () => {
+      const items = elementNodes();
+      if (payload.elementId) {
+        const id = escapeCss(payload.elementId);
+        const found = previewDocument.querySelector(`.elementor-element[data-id="${id}"], [data-elementor-id="${id}"]`);
+        if (found) return { element: found, index: items.indexOf(found) };
+      }
+      if (Number.isInteger(Number(payload.index)) && Number(payload.index) >= 0 && items[Number(payload.index)]) {
+        return { element: items[Number(payload.index)], index: Number(payload.index) };
+      }
+      const textNeedle = lower(payload.text || payload.textNeedle || '');
+      const widgetNeedle = lower(payload.widgetType || '');
+      const foundIndex = items.findIndex((el) => {
+        const textMatches = !textNeedle || lower(el.innerText || el.textContent || '').includes(textNeedle);
+        const widgetMatches = !widgetNeedle || lower(widgetTypeFor(el)).includes(widgetNeedle);
+        return textMatches && widgetMatches;
+      });
+      return foundIndex >= 0 ? { element: items[foundIndex], index: foundIndex } : { element: null, index: -1 };
+    };
+    const clickElement = async (el) => {
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'auto' });
+      const rect = el.getBoundingClientRect();
+      const eventInit = {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + Math.min(24, rect.height / 2),
+        view: frame?.contentWindow || window,
+      };
+      for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+        const EventCtor = type.startsWith('pointer') && frame?.contentWindow?.PointerEvent
+          ? frame.contentWindow.PointerEvent
+          : frame?.contentWindow?.MouseEvent || MouseEvent;
+        el.dispatchEvent(new EventCtor(type, eventInit));
+      }
+      if (typeof el.click === 'function') el.click();
+      await new Promise((resolve) => setTimeout(resolve, Math.max(120, Number(payload.waitMs || 350))));
+    };
+    const panelControls = () => Array.from(document.querySelectorAll(
+      '#elementor-panel [data-setting], #elementor-editor-wrapper-v2 [data-setting], .elementor-control input, .elementor-control textarea, .elementor-control select, .elementor-control [contenteditable="true"], .elementor-control iframe',
+    )).filter((el, index, items) => items.indexOf(el) === index);
+    const controlLabel = (el) => {
+      const container = el.closest('.elementor-control, [class*="elementor-control-"]');
+      return norm([
+        el.getAttribute('data-setting'),
+        el.getAttribute('aria-label'),
+        el.getAttribute('placeholder'),
+        container?.querySelector('.elementor-control-title, label')?.textContent,
+        container?.className,
+      ].filter(Boolean).join(' '));
+    };
+    const findControl = (needle) => {
+      const target = lower(needle);
+      const controls = panelControls();
+      if (!target) return controls.find(visible) || controls[0] || null;
+      return controls.find((el) => visible(el) && lower(el.getAttribute('data-setting')) === target)
+        || controls.find((el) => lower(el.getAttribute('data-setting')) === target)
+        || controls.find((el) => visible(el) && lower(controlLabel(el)).includes(target))
+        || controls.find((el) => lower(controlLabel(el)).includes(target))
+        || null;
+    };
+    const setNativeValue = (el, value) => {
+      const normalized = String(value ?? '');
+      if (el.tagName === 'IFRAME') {
+        const body = el.contentDocument?.body;
+        if (!body) throw new Error('Rich text iframe is not accessible.');
+        body.focus();
+        if (payload.html === true) body.innerHTML = normalized;
+        else body.textContent = normalized;
+        body.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: normalized }));
+        body.dispatchEvent(new Event('change', { bubbles: true }));
+        return body.innerHTML;
+      }
+      el.focus();
+      if (el.type === 'checkbox' || el.type === 'radio') {
+        el.checked = payload.checked != null ? !!payload.checked : ['1', 'true', 'yes', 'on'].includes(lower(normalized));
+      } else if (el.tagName === 'SELECT') {
+        const option = Array.from(el.options || []).find((item) => item.value === normalized || lower(item.textContent) === lower(normalized));
+        if (!option) throw new Error(`Elementor control option not found: ${normalized}`);
+        el.value = option.value;
+      } else if (el.isContentEditable) {
+        if (payload.html === true) el.innerHTML = normalized;
+        else el.textContent = normalized;
+      } else if ('value' in el) {
+        const prototype = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+        if (setter) setter.call(el, normalized);
+        else el.value = normalized;
+      } else {
+        throw new Error('Matched Elementor control is not editable.');
+      }
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: normalized }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+      return el.isContentEditable ? el.innerHTML : ('value' in el ? el.value : String(el.checked));
+    };
+
+    if (payload.operation === 'elementorInspect') {
+      const items = elementNodes();
+      const described = items.slice(0, Math.max(1, Number(payload.maxItems || 120))).map(describeElement);
+      const controls = panelControls().slice(0, 60).map((el, index) => ({
+        index,
+        setting: el.getAttribute('data-setting') || null,
+        type: el.tagName.toLowerCase() === 'input' ? el.type || 'text' : el.tagName.toLowerCase(),
+        label: controlLabel(el).slice(0, 180),
+        value: 'value' in el ? String(el.value || '').slice(0, 240) : null,
+        visible: visible(el),
+      }));
+      return {
+        ok: true,
+        product: 'elementor',
+        url: location.href,
+        postId,
+        previewAccessible: !!previewDocument,
+        elementCount: items.length,
+        elements: described,
+        panelControls: controls,
+        selectedElement: described.find((item) => item.selected) || null,
+      };
+    }
+
+    if (payload.operation === 'elementorSelectElement' || payload.operation === 'elementorEditText' || payload.operation === 'elementorSetControl') {
+      if (
+        (payload.operation === 'elementorEditText' || payload.operation === 'elementorSetControl')
+        && !Object.prototype.hasOwnProperty.call(payload, 'value')
+        && !Object.prototype.hasOwnProperty.call(payload, 'textValue')
+        && !Object.prototype.hasOwnProperty.call(payload, 'content')
+      ) {
+        return { ok: false, error: 'Provide value, textValue, or content for the Elementor edit.' };
+      }
+      if (payload.operation === 'elementorSetControl' && !(payload.controlName || payload.setting || payload.label)) {
+        return { ok: false, error: 'elementorSetControl requires controlName, setting, or label.' };
+      }
+      if (payload.elementId || payload.index != null || payload.text || payload.textNeedle || payload.widgetType) {
+        const resolved = resolveElement();
+        if (!resolved.element) return { ok: false, error: 'No matching Elementor element was found in the preview.' };
+        await clickElement(resolved.element);
+        if (payload.operation === 'elementorSelectElement') {
+          return { ok: true, selected: describeElement(resolved.element, resolved.index) };
+        }
+      } else if (payload.operation === 'elementorSelectElement') {
+        return { ok: false, error: 'Provide elementId, index, text, or widgetType.' };
+      }
+      let control = null;
+      if (payload.operation === 'elementorEditText') {
+        const preferred = [payload.controlName, 'title', 'editor', 'text', 'content', 'description', 'button_text'].filter(Boolean);
+        control = preferred.map(findControl).find(Boolean) || null;
+      } else {
+        control = findControl(payload.controlName || payload.setting || payload.label || '');
+      }
+      if (!control) {
+        return {
+          ok: false,
+          error: 'No matching Elementor panel control was found after selecting the element.',
+          availableControls: panelControls().slice(0, 30).map((el) => ({ setting: el.getAttribute('data-setting') || null, label: controlLabel(el).slice(0, 140) })),
+        };
+      }
+      try {
+        const appliedValue = setNativeValue(control, payload.value ?? payload.textValue ?? payload.content ?? '');
+        await new Promise((resolve) => setTimeout(resolve, Math.max(120, Number(payload.waitMs || 300))));
+        return {
+          ok: true,
+          control: {
+            setting: control.getAttribute('data-setting') || null,
+            label: controlLabel(control).slice(0, 180),
+            type: control.tagName.toLowerCase() === 'input' ? control.type || 'text' : control.tagName.toLowerCase(),
+          },
+          appliedValue: String(appliedValue || '').slice(0, 500),
+          changed: true,
+          saved: false,
+        };
+      } catch (error) {
+        return { ok: false, error: error?.message || String(error) };
+      }
+    }
+
+    if (payload.operation === 'elementorAddWidget') {
+      const widgetNeedle = lower(payload.widgetType || payload.widget || 'html');
+      const paletteItems = Array.from(document.querySelectorAll(
+        '#elementor-panel-elements-wrapper [data-widget_type], #elementor-panel-elements-wrapper [data-element_type="widget"], [data-element_type="widget"][data-widget_type]',
+      ));
+      const source = paletteItems.find((el) => lower(el.getAttribute('data-widget_type')).startsWith(widgetNeedle))
+        || paletteItems.find((el) => lower(el.textContent).includes(widgetNeedle));
+      if (!source) return { ok: false, error: `Elementor widget was not found in the panel: ${widgetNeedle}` };
+      let target = null;
+      if (payload.targetElementId) {
+        const id = escapeCss(payload.targetElementId);
+        target = previewDocument.querySelector(`.elementor-element[data-id="${id}"], [data-elementor-id="${id}"]`);
+      }
+      target ||= previewDocument.querySelector('.elementor-add-section, .elementor-add-new-section, .e-con-inner, .e-con, .elementor-column-wrap, .elementor-widget-wrap');
+      if (!target) return { ok: false, error: 'No Elementor drop target was found in the preview.' };
+      const beforeCount = elementNodes().length;
+      source.scrollIntoView({ block: 'center' });
+      target.scrollIntoView({ block: 'center' });
+      const dataTransfer = new DataTransfer();
+      const dispatchDrag = (node, type, view) => {
+        const rect = node.getBoundingClientRect();
+        node.dispatchEvent(new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          view,
+        }));
+      };
+      dispatchDrag(source, 'dragstart', window);
+      dispatchDrag(target, 'dragenter', frame.contentWindow);
+      dispatchDrag(target, 'dragover', frame.contentWindow);
+      dispatchDrag(target, 'drop', frame.contentWindow);
+      dispatchDrag(source, 'dragend', window);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(600, Number(payload.waitMs || 1200))));
+      const after = elementNodes();
+      return {
+        ok: after.length > beforeCount,
+        widgetType: widgetNeedle,
+        beforeCount,
+        afterCount: after.length,
+        addedElement: after.length > beforeCount ? describeElement(after[after.length - 1], after.length - 1) : null,
+        error: after.length > beforeCount ? null : 'The drag gesture was sent, but Elementor did not report a new element. The panel may need to be switched to the Elements view.',
+      };
+    }
+
+    if (payload.operation === 'elementorPanelTab') {
+      const tabName = lower(payload.tab || payload.name || 'content');
+      const aliases = {
+        content: ['content', 'вміст', 'содержимое'],
+        style: ['style', 'стиль'],
+        advanced: ['advanced', 'розширені', 'додатково', 'дополнительно'],
+        layout: ['layout', 'макет', 'розмітка'],
+      };
+      const needles = aliases[tabName] || [tabName];
+      const panel = document.querySelector('#elementor-panel, #elementor-editor-wrapper-v2, #elementor-editor-wrapper');
+      if (!panel) return { ok: false, error: 'Elementor settings panel was not found.' };
+      const tabs = Array.from(panel.querySelectorAll('[role="tab"], button, .elementor-panel-navigation-tab, [data-tab]')).filter(visible);
+      const target = tabs.find((el) => {
+        const haystack = lower([
+          el.textContent,
+          el.getAttribute('aria-label'),
+          el.getAttribute('title'),
+          el.getAttribute('data-tab'),
+          el.id,
+          el.className,
+        ].join(' '));
+        return needles.some((needle) => haystack.includes(needle));
+      });
+      if (!target) return { ok: false, error: `Elementor panel tab was not found: ${tabName}` };
+      target.click();
+      await new Promise((resolve) => setTimeout(resolve, Math.max(150, Number(payload.waitMs || 300))));
+      return {
+        ok: true,
+        tab: tabName,
+        clicked: norm(target.textContent || target.getAttribute('aria-label') || target.getAttribute('title') || target.id),
+        controls: panelControls().filter(visible).slice(0, 30).map((el) => ({
+          setting: el.getAttribute('data-setting') || null,
+          label: controlLabel(el).slice(0, 160),
+        })),
+      };
+    }
+
+    if (payload.operation === 'elementorResponsiveMode') {
+      const mode = lower(payload.mode || payload.device || 'desktop');
+      const candidates = Array.from(document.querySelectorAll('button, [role="button"], [data-device-mode], [data-device_mode]')).filter(visible);
+      const target = candidates.find((el) => lower(el.getAttribute('data-device-mode') || el.getAttribute('data-device_mode')) === mode)
+        || candidates.find((el) => lower([el.textContent, el.getAttribute('aria-label'), el.getAttribute('title')].join(' ')).includes(mode));
+      if (!target) return { ok: false, error: `Responsive mode control not found: ${mode}` };
+      target.click();
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return { ok: true, mode, clicked: norm(target.textContent || target.getAttribute('aria-label') || target.getAttribute('title')) };
+    }
+
+    if (payload.operation === 'elementorUndo' || payload.operation === 'elementorRedo') {
+      const redo = payload.operation === 'elementorRedo';
+      let used = 'keyboard';
+      try {
+        if (window.elementor?.history && typeof window.elementor.history[redo ? 'redo' : 'undo'] === 'function') {
+          window.elementor.history[redo ? 'redo' : 'undo']();
+          used = 'elementor-history';
+        } else {
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, metaKey: false, shiftKey: redo, bubbles: true }));
+          document.dispatchEvent(new KeyboardEvent('keyup', { key: 'z', ctrlKey: true, metaKey: false, shiftKey: redo, bubbles: true }));
+        }
+      } catch (error) {
+        return { ok: false, error: error?.message || String(error) };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      return { ok: true, action: redo ? 'redo' : 'undo', used };
+    }
+
+    if (payload.operation === 'elementorPreview') {
+      const editorRoots = Array.from(document.querySelectorAll('#elementor-panel, #elementor-editor-wrapper, #elementor-editor-wrapper-v2, .elementor-editor-active'));
+      const candidates = editorRoots.flatMap((root) => Array.from(root.querySelectorAll('a, button, [role="button"]')))
+        .filter((el, index, items) => visible(el) && items.indexOf(el) === index);
+      const target = candidates.find((el) => /preview|перегляд|попередн/i.test([
+        el.id,
+        el.textContent,
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+        el.getAttribute('data-tooltip'),
+      ].join(' ')));
+      if (!target) return { ok: false, error: 'Elementor preview control was not found.' };
+      target.click();
+      return { ok: true, clicked: norm(target.textContent || target.getAttribute('aria-label') || target.getAttribute('title') || target.id) };
+    }
+
+    if (payload.operation === 'elementorSave') {
+      if (payload.confirmSave !== true) {
+        return { ok: false, confirmationRequired: true, error: 'Set confirmSave=true only after the user explicitly confirms saving or publishing.' };
+      }
+      const mode = lower(payload.mode || 'update');
+      const modePatterns = {
+        draft: /save draft|зберегти чернетку/i,
+        update: /update|оновити|save changes|зберегти зміни/i,
+        publish: /publish|опублікувати/i,
+      };
+      const pattern = modePatterns[mode];
+      if (!pattern) return { ok: false, error: `Unsupported Elementor save mode: ${mode}` };
+      const editorRoots = Array.from(document.querySelectorAll('#elementor-panel, #elementor-editor-wrapper, #elementor-editor-wrapper-v2, .elementor-editor-active'));
+      const candidates = editorRoots.flatMap((root) => Array.from(root.querySelectorAll('button, [role="button"], input[type="submit"]')))
+        .filter((el, index, items) => visible(el) && items.indexOf(el) === index);
+      const target = candidates.find((el) => pattern.test([
+        el.textContent,
+        el.value,
+        el.id,
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+      ].join(' ')));
+      if (!target) return { ok: false, error: `Elementor ${mode} control was not found.` };
+      const label = norm(target.textContent || target.value || target.getAttribute('aria-label') || target.id);
+      target.click();
+      await new Promise((resolve) => setTimeout(resolve, Math.max(500, Number(payload.waitMs || 1000))));
+      return { ok: true, mode, clicked: label, confirmationUsed: true };
+    }
+
+    return { ok: false, error: `Unsupported Elementor operation: ${payload.operation}` };
+  }, [{ operation, ...params }], tabId);
+}
+
 async function handleCommand(command) {
   const params = command.params || {};
   const normalizedAction = normalizeCommandAction(command.action);
@@ -3435,6 +3888,19 @@ async function handleCommand(command) {
       }, params.tabId ?? null);
     case 'waitForPageReady':
       return await waitForPageReady(params.tabId ?? null, params.timeoutMs || 15000);
+    case 'wordpressInspect':
+    case 'elementorInspect':
+    case 'elementorSelectElement':
+    case 'elementorEditText':
+    case 'elementorSetControl':
+    case 'elementorAddWidget':
+    case 'elementorPanelTab':
+    case 'elementorResponsiveMode':
+    case 'elementorUndo':
+    case 'elementorRedo':
+    case 'elementorPreview':
+    case 'elementorSave':
+      return await elementorBridgeAction(normalizedAction, params, params.tabId ?? null);
     case 'openAtoModule':
       return await openAtoModule(params.moduleKey || params.module || '', {
         timeoutMs: params.timeoutMs || 18000,

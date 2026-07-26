@@ -45,6 +45,17 @@ That file explains:
 - `chrome_bridge_page_dom_snapshot`: deep DOM snapshot with forms, controls, frames, and shadow hosts
 - `chrome_bridge_page_dom_outline`: compact DOM outline with headings, forms, controls, landmarks, and text blocks
 - `chrome_bridge_page_summary`: short page summary with the key visible structure
+- `chrome_bridge_wordpress_inspect`: detect WordPress and the active editor context
+- `chrome_bridge_elementor_inspect`: map Elementor widgets, containers, preview, and panel controls
+- `chrome_bridge_elementor_select_element`: select a widget/container by stable Elementor id or semantic fallback
+- `chrome_bridge_elementor_edit_text`: edit widget text through the real Elementor panel control
+- `chrome_bridge_elementor_set_control`: update a named Elementor setting
+- `chrome_bridge_elementor_add_widget`: add a widget through verified drag-and-drop
+- `chrome_bridge_elementor_panel_tab`: open Content, Style, Advanced, or Layout controls
+- `chrome_bridge_elementor_responsive_mode`: switch desktop/tablet/mobile preview
+- `chrome_bridge_elementor_undo` / `chrome_bridge_elementor_redo`: safely iterate editor changes
+- `chrome_bridge_elementor_preview`: open preview without saving
+- `chrome_bridge_elementor_save`: confirmed draft/update/publish action
 - `chrome_bridge_page_section_reader`: split the page into logical sections
 - `chrome_bridge_find_dom_control`: find a control by text, label, placeholder, name, id, or role
 - `chrome_bridge_describe_dom_element`: inspect one DOM element in detail, including form context and geometry

@@ -71,6 +71,18 @@ TOOLS = [
     {"name":"chrome_bridge_page_dom_snapshot","description":"Return a deep DOM snapshot with forms, controls, frames, shadow hosts, and visible interactive elements.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeHidden":{"type":"boolean"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_dom_outline","description":"Return a compact DOM outline with headings, forms, controls, landmarks, and optional text blocks.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"includeTextBlocks":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_page_summary","description":"Return a concise summary of the current page with title, url, headings, controls, and key notes.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_inspect","description":"Detect WordPress and report the current editor type, post context, login state, and available Elementor capabilities.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_inspect","description":"Inspect the Elementor editor, preview iframe, stable element data-ids, widget types, selected element, and panel controls.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_select_element","description":"Select an Elementor element by stable elementId, map index, visible text, or widget type.","inputSchema":{"type":"object","properties":{"elementId":{"type":"string"},"index":{"type":"integer"},"text":{"type":"string"},"textNeedle":{"type":"string"},"widgetType":{"type":"string"},"waitMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_edit_text","description":"Select an Elementor element and edit its text through the real Elementor settings control so the change persists in the document model.","inputSchema":{"type":"object","properties":{"elementId":{"type":"string"},"index":{"type":"integer"},"text":{"type":"string"},"textNeedle":{"type":"string"},"widgetType":{"type":"string"},"controlName":{"type":"string"},"value":{"type":"string"},"textValue":{"type":"string"},"content":{"type":"string"},"html":{"type":"boolean"},"waitMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_set_control","description":"Set one visible Elementor panel control by setting name or label after optionally selecting an element.","inputSchema":{"type":"object","properties":{"elementId":{"type":"string"},"index":{"type":"integer"},"text":{"type":"string"},"textNeedle":{"type":"string"},"widgetType":{"type":"string"},"controlName":{"type":"string"},"setting":{"type":"string"},"label":{"type":"string"},"value":{"type":"string"},"checked":{"type":"boolean"},"html":{"type":"boolean"},"waitMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_add_widget","description":"Add an Elementor widget from the Elements panel to a container using a verified drag-and-drop gesture.","inputSchema":{"type":"object","properties":{"widgetType":{"type":"string"},"widget":{"type":"string"},"targetElementId":{"type":"string"},"waitMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_panel_tab","description":"Open the Elementor Content, Style, Advanced, or Layout settings tab and return its visible controls.","inputSchema":{"type":"object","properties":{"tab":{"type":"string","enum":["content","style","advanced","layout"]},"waitMs":{"type":"integer"},"tabId":{"type":"integer"}},"required":["tab"],"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_responsive_mode","description":"Switch the Elementor editor between desktop, tablet, and mobile responsive modes.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["desktop","tablet","mobile"]},"tabId":{"type":"integer"}},"required":["mode"],"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_undo","description":"Undo the latest Elementor document change.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_redo","description":"Redo the latest Elementor document change.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_preview","description":"Open Elementor preview without saving or publishing.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_elementor_save","description":"Save an Elementor document as draft, update, or publish only after explicit user confirmation.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["draft","update","publish"]},"confirmSave":{"type":"boolean"},"waitMs":{"type":"integer"},"tabId":{"type":"integer"}},"required":["mode","confirmSave"],"additionalProperties":False}},
     {"name":"chrome_bridge_page_section_reader","description":"Read the page as logical sections with titles, visible text, and nearby controls.","inputSchema":{"type":"object","properties":{"maxSections":{"type":"integer"},"maxItems":{"type":"integer"},"includeFrames":{"type":"boolean"},"includeShadowDom":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_scope_to_section","description":"Find the best visible container section by heading or keyword and return only that scoped block.","inputSchema":{"type":"object","properties":{"sectionNeedle":{"type":"string"},"section_needle":{"type":"string"},"needle":{"type":"string"},"section":{"type":"string"},"heading":{"type":"string"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_list_section_controls","description":"List only the visible controls inside a matched section container.","inputSchema":{"type":"object","properties":{"sectionNeedle":{"type":"string"},"section_needle":{"type":"string"},"needle":{"type":"string"},"section":{"type":"string"},"heading":{"type":"string"},"exact":{"type":"boolean"},"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
@@ -686,6 +698,27 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
     if name=="chrome_bridge_back": return as_text_content(call_bridge("back"))
     if name=="chrome_bridge_forward": return as_text_content(call_bridge("forward"))
     if name=="chrome_bridge_reload": return as_text_content(call_bridge("reload"))
+    elementor_tools={
+        "chrome_bridge_wordpress_inspect":"wordpressInspect",
+        "chrome_bridge_elementor_inspect":"elementorInspect",
+        "chrome_bridge_elementor_select_element":"elementorSelectElement",
+        "chrome_bridge_elementor_edit_text":"elementorEditText",
+        "chrome_bridge_elementor_set_control":"elementorSetControl",
+        "chrome_bridge_elementor_add_widget":"elementorAddWidget",
+        "chrome_bridge_elementor_panel_tab":"elementorPanelTab",
+        "chrome_bridge_elementor_responsive_mode":"elementorResponsiveMode",
+        "chrome_bridge_elementor_undo":"elementorUndo",
+        "chrome_bridge_elementor_redo":"elementorRedo",
+        "chrome_bridge_elementor_preview":"elementorPreview",
+        "chrome_bridge_elementor_save":"elementorSave",
+    }
+    if name in elementor_tools:
+        payload=dict(arguments)
+        if "tabId" in payload: payload["tabId"]=int(payload["tabId"])
+        if "index" in payload: payload["index"]=int(payload["index"])
+        if "maxItems" in payload: payload["maxItems"]=int(payload["maxItems"])
+        if "waitMs" in payload: payload["waitMs"]=int(payload["waitMs"])
+        return as_text_content(call_bridge(elementor_tools[name],payload))
     raise ValueError(f"Unknown tool: {name}")
 def main()->None:
     while True:
@@ -694,7 +727,7 @@ def main()->None:
         method=message.get("method"); msg_id=message.get("id")
         try:
             if method=="initialize":
-              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.2.13"}})
+              send_response(msg_id,{"protocolVersion":message.get("params",{}).get("protocolVersion","2024-11-05"),"capabilities":{"tools":{}},"serverInfo":{"name":"chrome-bridge","version":"0.3.0"}})
             elif method=="notifications/initialized":
                 continue
             elif method=="tools/list":

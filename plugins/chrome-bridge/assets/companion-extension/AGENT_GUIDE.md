@@ -13,6 +13,7 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Create and maintain a Codex tab workspace group for related tabs.
 - Use guarded file upload flows for files the user already owns.
 - Work with ATutor, Moodle, GitHub, forms, dashboards, and similar browser apps.
+- Inspect and edit WordPress pages through Elementor's real preview iframe and settings panel.
 
 ## What it cannot do by design
 
@@ -67,6 +68,18 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use tab groups when you need several related pages open together.
 - Use the upload assistant only for user-owned completed files.
 - Use preflight before attach/submit when file integrity matters.
+
+## WordPress and Elementor
+
+- Start with `wordpressInspect` to identify WordPress, the active editor, post id, and preview availability.
+- Use `elementorInspect` to map Elementor sections, containers, widgets, stable `data-id` values, the selected element, and visible panel controls.
+- Use `elementorSelectElement` by `elementId` whenever possible; text, widget type, and map index are fallbacks.
+- Use `elementorEditText` or `elementorSetControl` to change the real editor setting. Do not directly rewrite the preview DOM because that change will not persist.
+- Use `elementorPanelTab` to open Content, Style, Advanced, or Layout before looking for controls that are not currently mounted in the panel.
+- Use `elementorAddWidget` for a verified widget drag from the Elements panel into a target container.
+- Use `elementorResponsiveMode` to inspect desktop, tablet, and mobile layouts.
+- Use `elementorUndo` / `elementorRedo` for safe iteration and `elementorPreview` before saving.
+- Use `elementorSave` only after the user explicitly confirms it. Keep `draft`, `update`, and `publish` as distinct modes and pass `confirmSave: true` only for that confirmed action.
 
 ## Question-container mode
 
