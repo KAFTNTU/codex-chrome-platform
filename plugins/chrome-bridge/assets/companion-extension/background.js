@@ -3518,7 +3518,7 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
       await new Promise((resolve) => setTimeout(resolve, Math.max(120, Number(payload.waitMs || 350))));
     };
     const panelControls = () => Array.from(document.querySelectorAll(
-      '#elementor-panel [data-setting], #elementor-editor-wrapper-v2 [data-setting], .elementor-control input, .elementor-control textarea, .elementor-control select, .elementor-control [contenteditable="true"], .elementor-control iframe',
+      '#elementor-panel [data-setting], #elementor-editor-wrapper-v2 [data-setting], .elementor-control input, .elementor-control textarea, .elementor-control select, .elementor-control [contenteditable="true"], .elementor-control iframe, #elementorwpeditor, #elementorwpeditor_ifr',
     )).filter((el, index, items) => items.indexOf(el) === index);
     const controlLabel = (el) => {
       const container = el.closest('.elementor-control, [class*="elementor-control-"]');
@@ -3542,6 +3542,20 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
     };
     const setNativeValue = (el, value) => {
       const normalized = String(value ?? '');
+      const tinyMceId = el.tagName === 'IFRAME' && /_ifr$/.test(el.id || '')
+        ? el.id.replace(/_ifr$/, '')
+        : el.id || '';
+      const tinyMceEditor = tinyMceId && window.tinymce?.get?.(tinyMceId);
+      if (tinyMceEditor) {
+        tinyMceEditor.setContent(payload.html === true ? normalized : norm(normalized));
+        tinyMceEditor.fire('input');
+        tinyMceEditor.fire('change');
+        tinyMceEditor.save();
+        const source = document.getElementById(tinyMceId);
+        source?.dispatchEvent(new Event('input', { bubbles: true }));
+        source?.dispatchEvent(new Event('change', { bubbles: true }));
+        return tinyMceEditor.getContent();
+      }
       if (el.tagName === 'IFRAME') {
         const body = el.contentDocument?.body;
         if (!body) throw new Error('Rich text iframe is not accessible.');
@@ -3590,6 +3604,7 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
       return {
         ok: true,
         product: 'elementor',
+        version: window.elementor?.config?.version || window.ElementorConfig?.version || null,
         url: location.href,
         postId,
         previewAccessible: !!previewDocument,
