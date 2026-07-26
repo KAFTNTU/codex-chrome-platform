@@ -50,6 +50,10 @@ That file explains:
 - `chrome_bridge_wordpress_content_list`: filter content visible in the current WordPress admin table
 - `chrome_bridge_wordpress_plugin_theme_audit`: read plugin/theme versions and update notices without changing them
 - `chrome_bridge_wordpress_open_admin_section`: navigate safely within the same site's admin sections
+- `chrome_bridge_wordpress_create_draft`: create a confirmed page/post draft through the authenticated WordPress REST API
+- `chrome_bridge_wordpress_open_plugin_search`: open same-site Add Plugins search
+- `chrome_bridge_wordpress_plugin_action`: confirmed install/activate/deactivate/update/delete action
+- `chrome_bridge_wordpress_theme_action`: confirmed install/activate/update/delete action
 - `chrome_bridge_elementor_wait_ready`: wait for the panel and preview document to become usable
 - `chrome_bridge_elementor_inspect`: map Elementor widgets, containers, preview, and panel controls
 - `chrome_bridge_elementor_navigator`: return a compact Elementor hierarchy with stable ids and parent relationships

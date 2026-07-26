@@ -237,7 +237,8 @@ function buildAssistantSystemPrompt(context) {
     'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: wordpressInspect, wordpressAdminInspect, wordpressContentList, wordpressPluginThemeAudit, wordpressOpenAdminSection, elementorWaitReady, elementorInspect, elementorNavigator, elementorFindElements, elementorAudit, elementorQualitySuite, elementorResponsiveAudit, elementorCreateCheckpoint, elementorCompareCheckpoint, elementorListCheckpoints, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: wordpressInspect, wordpressAdminInspect, wordpressContentList, wordpressPluginThemeAudit, wordpressOpenAdminSection, wordpressCreateDraft, wordpressOpenPluginSearch, wordpressPluginAction, wordpressThemeAction, elementorWaitReady, elementorInspect, elementorNavigator, elementorFindElements, elementorAudit, elementorQualitySuite, elementorResponsiveAudit, elementorCreateCheckpoint, elementorCompareCheckpoint, elementorListCheckpoints, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
+    'WordPress creation is draft-only. Plugin/theme install, activate, deactivate, update, or delete actions require explicit confirmation flags. After any WordPress write action, re-inspect the admin screen before claiming success.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -675,6 +676,12 @@ function normalizeCommandAction(action) {
     wordpresscontentlist: 'wordpressContentList',
     wordpresspluginthemeaudit: 'wordpressPluginThemeAudit',
     wordpressopenadminsection: 'wordpressOpenAdminSection',
+    wordpresscreatedraft: 'wordpressCreateDraft',
+    wordpresscreatepage: 'wordpressCreateDraft',
+    wordpresscreatepost: 'wordpressCreateDraft',
+    wordpresspluginaction: 'wordpressPluginAction',
+    wordpressthemeaction: 'wordpressThemeAction',
+    wordpressopenpluginsearch: 'wordpressOpenPluginSearch',
     elementorinspect: 'elementorInspect',
     inspectelementor: 'elementorInspect',
     elementorwaitready: 'elementorWaitReady',
@@ -3452,7 +3459,7 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
       url: location.href,
       title: document.title,
       isAdmin: /\/wp-admin(?:\/|$)/i.test(location.pathname) || !!document.body?.className?.match(/wp-admin|wp-core-ui/),
-      isLoggedIn: !!document.querySelector('#wpadminbar, body.logged-in'),
+      isLoggedIn: /\/wp-admin(?:\/|$)/i.test(location.pathname) || !!document.querySelector('#wpadminbar, body.logged-in'),
       editor: editorDetected
         ? 'elementor'
         : document.querySelector('.block-editor, .edit-post-layout, .interface-interface-skeleton')
@@ -3469,6 +3476,128 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
         : ['inspect-page', 'generic-dom-tools'],
     });
     if (payload.operation === 'wordpressInspect') return inspectWordPress();
+    if (payload.operation === 'wordpressCreateDraft') {
+      const wordpress = inspectWordPress();
+      if (!wordpress.isAdmin || !wordpress.isLoggedIn) {
+        return { ok: false, error: 'A logged-in WordPress admin screen is required.', wordpress };
+      }
+      if (payload.confirmCreate !== true) {
+        return { ok: false, confirmationRequired: true, error: 'Set confirmCreate=true only after the user explicitly asks to create this draft.' };
+      }
+      const title = norm(payload.title);
+      if (!title) return { ok: false, error: 'A non-empty draft title is required.' };
+      const type = lower(payload.type || 'page');
+      if (!['page', 'post'].includes(type)) return { ok: false, error: 'Draft type must be page or post.' };
+      const extraScript = document.querySelector('#wp-api-request-js-extra')?.textContent || '';
+      let apiSettings = null;
+      const objectMatch = extraScript.match(/wpApiSettings\s*=\s*(\{[\s\S]*?\});/);
+      if (objectMatch) {
+        try { apiSettings = JSON.parse(objectMatch[1]); } catch { apiSettings = null; }
+      }
+      const nonce = apiSettings?.nonce
+        || document.querySelector('input[name="_wpnonce"], input[name="_wpnonce_create-post"]')?.value
+        || null;
+      const apiRoot = apiSettings?.root
+        || document.querySelector('link[rel="https://api.w.org/"]')?.href
+        || `${location.origin}/wp-json/`;
+      if (!nonce) return { ok: false, error: 'WordPress REST nonce was not found. The draft was not created.' };
+      const response = await fetch(new URL(`wp/v2/${type === 'page' ? 'pages' : 'posts'}`, apiRoot), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-WP-Nonce': nonce },
+        body: JSON.stringify({
+          title,
+          content: String(payload.content || ''),
+          excerpt: String(payload.excerpt || ''),
+          slug: payload.slug ? String(payload.slug) : undefined,
+          status: 'draft',
+        }),
+      });
+      let result = null;
+      try { result = await response.json(); } catch { result = null; }
+      if (!response.ok) {
+        return { ok: false, status: response.status, error: result?.message || `WordPress returned HTTP ${response.status}.`, details: result };
+      }
+      return {
+        ok: true,
+        created: true,
+        status: result.status,
+        type,
+        id: result.id,
+        title: result.title?.rendered || title,
+        editUrl: result.link ? `${location.origin}/wp-admin/post.php?post=${result.id}&action=edit` : null,
+        publicUrl: result.link || null,
+        confirmationUsed: true,
+      };
+    }
+    if (payload.operation === 'wordpressPluginAction' || payload.operation === 'wordpressThemeAction') {
+      const wordpress = inspectWordPress();
+      if (!wordpress.isAdmin || !wordpress.isLoggedIn) {
+        return { ok: false, error: 'A logged-in WordPress admin screen is required.', wordpress };
+      }
+      if (payload.confirmAction !== true) {
+        return { ok: false, confirmationRequired: true, error: 'Set confirmAction=true only after the user explicitly confirms this WordPress change.' };
+      }
+      const action = lower(payload.pluginAction || payload.themeAction || payload.action);
+      const deleting = action === 'delete';
+      if (deleting && payload.confirmDelete !== true) {
+        return { ok: false, confirmationRequired: true, error: 'Plugin/theme deletion additionally requires confirmDelete=true.' };
+      }
+      const allowed = payload.operation === 'wordpressPluginAction'
+        ? ['install', 'activate', 'deactivate', 'update', 'delete']
+        : ['install', 'activate', 'update', 'delete'];
+      if (!allowed.includes(action)) return { ok: false, error: `Unsupported ${payload.operation === 'wordpressPluginAction' ? 'plugin' : 'theme'} action: ${action}` };
+      const needle = lower(payload.slug || payload.pluginSlug || payload.themeSlug || payload.name || '');
+      if (!needle) return { ok: false, error: 'Provide a plugin/theme slug or name.' };
+      const containers = Array.from(document.querySelectorAll(
+        payload.operation === 'wordpressPluginAction'
+          ? 'tr[data-slug], .plugin-card'
+          : '.theme[data-slug], .theme',
+      ));
+      const container = containers.find((item) => lower([
+        item.getAttribute('data-slug'),
+        item.querySelector('.plugin-title, .theme-name')?.textContent,
+        item.textContent,
+      ].join(' ')).includes(needle));
+      if (!container) return { ok: false, error: `No matching ${payload.operation === 'wordpressPluginAction' ? 'plugin' : 'theme'} found on the current screen: ${needle}` };
+      const selectors = {
+        install: '.install-now, a[href*="action=install"], button[data-action="install"]',
+        activate: '.activate-now, .activate a, a[href*="action=activate"]',
+        deactivate: '.deactivate a, a[href*="action=deactivate"]',
+        update: '.update-now, a[href*="action=upgrade"], button[data-action="update"]',
+        delete: '.delete a, a[href*="action=delete"]',
+      };
+      const control = container.querySelector(selectors[action]);
+      if (!control) return { ok: false, error: `The ${action} control is not available for this item.` };
+      const label = norm(control.textContent || control.getAttribute('aria-label') || control.title);
+      const href = control.href || null;
+      if (href) {
+        window.setTimeout(() => location.assign(href), 100);
+        return {
+          ok: true,
+          action,
+          item: needle,
+          clicked: label,
+          href,
+          navigationScheduled: true,
+          confirmationUsed: true,
+          deletionConfirmed: deleting,
+          note: 'WordPress action navigation was scheduled. Wait for page readiness and re-inspect the admin screen.',
+        };
+      }
+      control.click();
+      await new Promise((resolve) => setTimeout(resolve, Math.max(500, Number(payload.waitMs || 1400))));
+      return {
+        ok: true,
+        action,
+        item: needle,
+        clicked: label,
+        href,
+        confirmationUsed: true,
+        deletionConfirmed: deleting,
+        note: 'WordPress accepted the control click. Re-inspect the admin screen to verify the final state.',
+      };
+    }
     if (['wordpressAdminInspect', 'wordpressContentList', 'wordpressPluginThemeAudit'].includes(payload.operation)) {
       const wordpress = inspectWordPress();
       if (!wordpress.isAdmin) return { ok: false, error: 'The current page is not a WordPress admin screen.', wordpress };
@@ -4672,6 +4801,20 @@ async function wordpressOpenAdminSection(params = {}, tabId = null) {
   }, resolvedTabId);
 }
 
+async function wordpressOpenPluginSearch(params = {}, tabId = null) {
+  const query = String(params.query || params.plugin || '').trim();
+  if (!query) return { ok: false, error: 'A plugin search query is required.' };
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const tab = await chrome.tabs.get(resolvedTabId);
+  const current = new URL(tab.url);
+  if (!/^https?:$/.test(current.protocol)) return { ok: false, error: 'The active tab is not an HTTP(S) WordPress page.' };
+  const url = new URL(`/wp-admin/plugin-install.php?tab=search&type=term&s=${encodeURIComponent(query)}`, current.origin).href;
+  return await navigateAndWait(url, {
+    timeoutMs: params.timeoutMs || 20000,
+    urlContains: '/wp-admin/plugin-install.php',
+  }, resolvedTabId);
+}
+
 async function handleCommand(command) {
   const params = command.params || {};
   const normalizedAction = normalizeCommandAction(command.action);
@@ -4747,6 +4890,9 @@ async function handleCommand(command) {
     case 'wordpressAdminInspect':
     case 'wordpressContentList':
     case 'wordpressPluginThemeAudit':
+    case 'wordpressCreateDraft':
+    case 'wordpressPluginAction':
+    case 'wordpressThemeAction':
     case 'elementorWaitReady':
     case 'elementorInspect':
     case 'elementorNavigator':
@@ -4770,6 +4916,8 @@ async function handleCommand(command) {
       return await elementorBridgeAction(normalizedAction, params, params.tabId ?? null);
     case 'wordpressOpenAdminSection':
       return await wordpressOpenAdminSection(params, params.tabId ?? null);
+    case 'wordpressOpenPluginSearch':
+      return await wordpressOpenPluginSearch(params, params.tabId ?? null);
     case 'elementorRunWorkflow':
       return await elementorRunWorkflow(params, params.tabId ?? null);
     case 'elementorResponsiveAudit':

@@ -51,6 +51,8 @@ The workflow can work independently through routine reversible edits without ask
 
 For WordPress administration, I can map the current admin screen, read posts/pages and other list tables, inspect plugin/theme update notices, and safely navigate to Dashboard, Posts, Pages, Media, Themes, Plugins, Menus, Widgets, Elementor Templates, or Site Health. Plugin installs, activation, updates, deletion, and publishing are not performed by these read-only inspection tools.
 
+With explicit confirmation, I can also create a new page or post as a **draft**, search the official Add Plugins screen, and use the visible WordPress controls to install, activate, deactivate, or update a plugin or theme. Deletion requires a second `confirmDelete` flag. These tools never publish a new page automatically, and they re-inspect WordPress after a write action.
+
 ## Two access profiles
 
 I keep the UI simple on purpose:

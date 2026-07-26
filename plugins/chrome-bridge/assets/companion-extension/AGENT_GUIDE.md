@@ -76,6 +76,10 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `wordpressContentList` to search the current Posts, Pages, Media, Plugins, Themes, or Users screen.
 - Use `wordpressPluginThemeAudit` only as a read-only update/version audit.
 - Use `wordpressOpenAdminSection` for same-site navigation to known WordPress admin sections.
+- Use `wordpressCreateDraft` only for `page` or `post` drafts and only with explicit `confirmCreate: true`; never turn it into automatic publishing.
+- Use `wordpressOpenPluginSearch` before attempting to install a plugin.
+- Use `wordpressPluginAction` / `wordpressThemeAction` only for the exact item and action the user confirmed. Deletion additionally requires `confirmDelete: true`.
+- Re-run `wordpressAdminInspect` or `wordpressPluginThemeAudit` after every write action.
 - Use `elementorWaitReady` before editing when the preview iframe or settings panel is still loading.
 - Use `elementorFindElements` for a narrow search by text, widget type, element type, parent id, or visibility.
 - Use `elementorNavigator` for a compact hierarchy before requesting the larger `elementorInspect` result.
