@@ -207,7 +207,7 @@ function buildAssistantSystemPrompt(context) {
     'Do not greet the user or start with generic chat like "Hello". If the task is browser-related, immediately work on the page. If the task is unclear, ask one short clarifying question instead of chatting.',
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
-    'When WordPress or Elementor is detected, use wordpressInspect and elementorNavigator before generic page tools. Treat the Elementor preview iframe and settings panel as one editor, identify elements by stable data-id, and prefer Elementor-specific actions. Use elementorRunWorkflow for multi-step edits so each step is verified and failures can be rolled back.',
+    'When WordPress or Elementor is detected, use elementorWaitReady, wordpressInspect, and elementorNavigator before generic page tools. Use elementorFindElements instead of reading the full tree when the target is known. Treat the Elementor preview iframe and settings panel as one editor, identify elements by stable data-id, and prefer Elementor-specific actions. Use elementorRunWorkflow for multi-step edits so each step is verified and failures can be rolled back, then use elementorAudit to check the result.',
     'For Elementor edits, change one element or control at a time and inspect the result before continuing. Do not mutate preview HTML directly because that does not persist to the Elementor document model.',
     'Never call elementorSave unless the user explicitly asked to save, update, or publish. Pass confirmSave=true only for that explicit request, and keep draft, update, and publish as distinct modes.',
     'Never call elementorDeleteElement unless the user explicitly asked to remove that exact element. Pass confirmDelete=true only for that exact confirmed deletion.',
@@ -236,7 +236,7 @@ function buildAssistantSystemPrompt(context) {
     'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: wordpressInspect, elementorInspect, elementorNavigator, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: wordpressInspect, elementorWaitReady, elementorInspect, elementorNavigator, elementorFindElements, elementorAudit, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -671,8 +671,14 @@ function normalizeCommandAction(action) {
     inspectwordpress: 'wordpressInspect',
     elementorinspect: 'elementorInspect',
     inspectelementor: 'elementorInspect',
+    elementorwaitready: 'elementorWaitReady',
+    waitelementorready: 'elementorWaitReady',
     elementornavigator: 'elementorNavigator',
     elementortree: 'elementorNavigator',
+    elementorfindelements: 'elementorFindElements',
+    elementorfind: 'elementorFindElements',
+    elementoraudit: 'elementorAudit',
+    auditelementor: 'elementorAudit',
     elementorselectelement: 'elementorSelectElement',
     elementorselectwidget: 'elementorSelectElement',
     elementoredittext: 'elementorEditText',
@@ -3445,15 +3451,52 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
       hasPreviewFrame: !!frame,
       previewAccessible: !!previewDocument,
       capabilities: editorDetected
-        ? ['inspect', 'navigator', 'select-element', 'edit-text', 'batch-controls', 'add-widget', 'move', 'duplicate', 'confirmed-delete', 'workflow', 'responsive-mode', 'undo-redo', 'preview', 'confirmed-save']
+        ? ['wait-ready', 'inspect', 'navigator', 'find-elements', 'technical-audit', 'select-element', 'edit-text', 'batch-controls', 'add-widget', 'move', 'duplicate', 'confirmed-delete', 'workflow', 'responsive-mode', 'undo-redo', 'preview', 'confirmed-save']
         : ['inspect-page', 'generic-dom-tools'],
     });
     if (payload.operation === 'wordpressInspect') return inspectWordPress();
     if (!editorDetected) {
       return { ok: false, error: 'Elementor editor was not detected on the current page.', wordpress: inspectWordPress() };
     }
-    if (!previewDocument && !['elementorPreview', 'elementorSave', 'elementorResponsiveMode', 'elementorUndo', 'elementorRedo'].includes(payload.operation)) {
+    if (!previewDocument && !['elementorWaitReady', 'elementorPreview', 'elementorSave', 'elementorResponsiveMode', 'elementorUndo', 'elementorRedo'].includes(payload.operation)) {
       return { ok: false, error: 'Elementor preview iframe is not accessible yet. Wait for the editor preview to finish loading.' };
+    }
+
+    if (payload.operation === 'elementorWaitReady') {
+      const startedAt = Date.now();
+      const timeoutMs = Math.max(500, Math.min(60000, Number(payload.timeoutMs || 20000)));
+      const pollMs = Math.max(100, Math.min(1000, Number(payload.pollMs || 250)));
+      while (Date.now() - startedAt < timeoutMs) {
+        const currentFrame = document.querySelector('#elementor-preview-iframe, iframe[name="elementor-preview-iframe"], iframe.elementor-preview-iframe');
+        try {
+          previewDocument = currentFrame?.contentDocument || currentFrame?.contentWindow?.document || null;
+        } catch {
+          previewDocument = null;
+        }
+        const panelReady = !!document.querySelector('#elementor-panel, #elementor-editor-wrapper, #elementor-editor-wrapper-v2');
+        const previewReady = !!(
+          previewDocument
+          && previewDocument.readyState !== 'loading'
+          && previewDocument.body
+          && previewDocument.querySelector('.elementor, .elementor-element, [data-elementor-id]')
+        );
+        if (panelReady && previewReady) {
+          return {
+            ok: true,
+            ready: true,
+            elapsedMs: Date.now() - startedAt,
+            elementCount: previewDocument.querySelectorAll('.elementor-element[data-id], [data-elementor-id]').length,
+            postId,
+          };
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+      return {
+        ok: false,
+        ready: false,
+        elapsedMs: Date.now() - startedAt,
+        error: 'Timed out while waiting for the Elementor panel and preview document.',
+      };
     }
 
     const elementNodes = () => {
@@ -3656,6 +3699,142 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
         elementCount: items.length,
         truncated: items.length > tree.length,
         tree,
+      };
+    }
+
+    if (payload.operation === 'elementorFindElements') {
+      const textNeedle = lower(payload.text || payload.textNeedle || payload.query || '');
+      const widgetNeedle = lower(payload.widgetType || '');
+      const elementNeedle = lower(payload.elementType || '');
+      const parentNeedle = String(payload.parentId || '').trim();
+      const visibleOnly = payload.visibleOnly !== false;
+      const limit = Math.max(1, Math.min(100, Number(payload.limit || 25)));
+      const matches = elementNodes().map(describeElement).filter((item) => {
+        if (textNeedle && !lower(item.text).includes(textNeedle)) return false;
+        if (widgetNeedle && !lower(item.widgetType).includes(widgetNeedle)) return false;
+        if (elementNeedle && !lower(item.elementType).includes(elementNeedle)) return false;
+        if (parentNeedle && item.parentId !== parentNeedle) return false;
+        if (visibleOnly && !item.visible) return false;
+        return true;
+      });
+      return {
+        ok: true,
+        query: {
+          text: textNeedle || null,
+          widgetType: widgetNeedle || null,
+          elementType: elementNeedle || null,
+          parentId: parentNeedle || null,
+          visibleOnly,
+        },
+        matchCount: matches.length,
+        truncated: matches.length > limit,
+        matches: matches.slice(0, limit),
+      };
+    }
+
+    if (payload.operation === 'elementorAudit') {
+      const issues = [];
+      const maxIssues = Math.max(10, Math.min(500, Number(payload.maxIssues || 150)));
+      const addIssue = (severity, code, message, el = null) => {
+        if (issues.length >= maxIssues) return;
+        const owner = el?.closest?.('.elementor-element[data-id], [data-elementor-id]');
+        const rect = el?.getBoundingClientRect?.();
+        issues.push({
+          severity,
+          code,
+          message,
+          elementId: owner?.getAttribute('data-id') || owner?.getAttribute('data-elementor-id') || null,
+          tag: el?.tagName?.toLowerCase?.() || null,
+          text: norm(el?.innerText || el?.textContent || el?.getAttribute?.('aria-label') || '').slice(0, 140),
+          rect: rect ? {
+            left: Math.round(rect.left),
+            top: Math.round(rect.top),
+            width: Math.round(rect.width),
+            height: Math.round(rect.height),
+          } : null,
+        });
+      };
+      const accessibleName = (el) => norm(
+        el.getAttribute('aria-label')
+        || el.getAttribute('title')
+        || el.getAttribute('alt')
+        || el.innerText
+        || el.textContent
+        || '',
+      );
+      for (const img of previewDocument.querySelectorAll('img')) {
+        if (!img.hasAttribute('alt')) addIssue('warning', 'image-missing-alt', 'Image has no alt attribute.', img);
+      }
+      for (const control of previewDocument.querySelectorAll('a[href], button, [role="button"]')) {
+        if (visible(control) && !accessibleName(control)) {
+          addIssue('error', 'control-missing-name', 'Visible link or button has no accessible name.', control);
+        }
+      }
+      for (const input of previewDocument.querySelectorAll('input:not([type="hidden"]), select, textarea')) {
+        if (!visible(input)) continue;
+        const id = input.id;
+        const labelled = input.hasAttribute('aria-label')
+          || input.hasAttribute('aria-labelledby')
+          || (id && previewDocument.querySelector(`label[for="${escapeCss(id)}"]`))
+          || input.closest('label');
+        if (!labelled) addIssue('warning', 'field-missing-label', 'Visible form field has no associated label.', input);
+      }
+      const headings = Array.from(previewDocument.querySelectorAll('h1, h2, h3, h4, h5, h6')).filter(visible);
+      let previousLevel = 0;
+      for (const heading of headings) {
+        const level = Number(heading.tagName.slice(1));
+        if (previousLevel && level > previousLevel + 1) {
+          addIssue('warning', 'heading-level-skip', `Heading level jumps from h${previousLevel} to h${level}.`, heading);
+        }
+        if (!norm(heading.textContent)) addIssue('warning', 'empty-heading', 'Heading has no text.', heading);
+        previousLevel = level;
+      }
+      const ids = new Map();
+      for (const el of previewDocument.querySelectorAll('[id]')) {
+        const id = el.id;
+        if (!id) continue;
+        if (ids.has(id)) {
+          addIssue('error', 'duplicate-id', `Duplicate DOM id: ${id}`, el);
+        } else {
+          ids.set(id, el);
+        }
+      }
+      const viewportWidth = previewDocument.documentElement.clientWidth;
+      for (const el of Array.from(previewDocument.body.querySelectorAll('*')).slice(0, 5000)) {
+        if (!visible(el)) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.right > viewportWidth + 2 || rect.left < -2) {
+          addIssue('warning', 'horizontal-overflow', 'Visible element extends beyond the preview viewport.', el);
+        }
+      }
+      for (const control of previewDocument.querySelectorAll('a[href], button, input, select, textarea, [role="button"]')) {
+        if (!visible(control)) continue;
+        const rect = control.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && (rect.width < 24 || rect.height < 24)) {
+          addIssue('info', 'small-hit-target', 'Interactive target is smaller than 24x24 CSS pixels.', control);
+        }
+      }
+      const counts = issues.reduce((result, issue) => {
+        result[issue.severity] = (result[issue.severity] || 0) + 1;
+        return result;
+      }, { error: 0, warning: 0, info: 0 });
+      const score = Math.max(0, 100 - counts.error * 10 - counts.warning * 3 - counts.info);
+      return {
+        ok: true,
+        product: 'elementor',
+        postId,
+        score,
+        counts,
+        issueCount: issues.length,
+        truncated: issues.length >= maxIssues,
+        viewport: {
+          width: viewportWidth,
+          height: previewDocument.documentElement.clientHeight,
+          scrollWidth: previewDocument.documentElement.scrollWidth,
+          scrollHeight: previewDocument.documentElement.scrollHeight,
+        },
+        issues,
+        note: 'This is a technical accessibility and layout audit; it does not judge content quality.',
       };
     }
 
@@ -4027,8 +4206,11 @@ async function elementorRunWorkflow(params = {}, tabId = null) {
   if (!steps.length) return { ok: false, error: 'elementorRunWorkflow requires a non-empty steps array.' };
   if (steps.length > 60) return { ok: false, error: 'An Elementor workflow is limited to 60 steps.' };
   const allowed = new Set([
+    'elementorWaitReady',
     'elementorInspect',
     'elementorNavigator',
+    'elementorFindElements',
+    'elementorAudit',
     'elementorSelectElement',
     'elementorEditText',
     'elementorSetControl',
@@ -4084,6 +4266,12 @@ async function elementorRunWorkflow(params = {}, tabId = null) {
   if (!failed && params.previewAfter !== false) {
     preview = await elementorBridgeAction('elementorPreview', {}, tabId);
   }
+  let audit = null;
+  if (!failed && params.auditAfter === true) {
+    audit = await elementorBridgeAction('elementorAudit', {
+      maxIssues: params.maxAuditIssues,
+    }, tabId);
+  }
   let save = null;
   if (!failed && params.saveMode) {
     save = await elementorBridgeAction('elementorSave', {
@@ -4101,6 +4289,7 @@ async function elementorRunWorkflow(params = {}, tabId = null) {
     rollbackAttempted: rollback.length > 0,
     rollback,
     preview,
+    audit,
     save,
     saved: save?.ok === true,
     error: failed?.error || failed?.result?.error || save?.error || null,
@@ -4179,8 +4368,11 @@ async function handleCommand(command) {
     case 'waitForPageReady':
       return await waitForPageReady(params.tabId ?? null, params.timeoutMs || 15000);
     case 'wordpressInspect':
+    case 'elementorWaitReady':
     case 'elementorInspect':
     case 'elementorNavigator':
+    case 'elementorFindElements':
+    case 'elementorAudit':
     case 'elementorSelectElement':
     case 'elementorEditText':
     case 'elementorSetControl':

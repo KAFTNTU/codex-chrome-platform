@@ -72,6 +72,8 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 ## WordPress and Elementor
 
 - Start with `wordpressInspect` to identify WordPress, the active editor, post id, and preview availability.
+- Use `elementorWaitReady` before editing when the preview iframe or settings panel is still loading.
+- Use `elementorFindElements` for a narrow search by text, widget type, element type, parent id, or visibility.
 - Use `elementorNavigator` for a compact hierarchy before requesting the larger `elementorInspect` result.
 - Use `elementorInspect` to inspect Elementor sections, containers, widgets, stable `data-id` values, the selected element, and visible panel controls.
 - Use `elementorSelectElement` by `elementId` whenever possible; text, widget type, and map index are fallbacks.
@@ -83,6 +85,7 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `elementorResponsiveMode` to inspect desktop, tablet, and mobile layouts.
 - Use `elementorUndo` / `elementorRedo` for safe iteration and `elementorPreview` before saving.
 - Use `elementorRunWorkflow` for up to 60 ordered steps. Prefer `stopOnError: true`, `rollbackOnError: true`, and `previewAfter: true`.
+- Use `elementorAudit` after substantial edits. It performs technical accessibility/layout checks without judging content quality.
 - Use `elementorSave` only after the user explicitly confirms it. Keep `draft`, `update`, and `publish` as distinct modes and pass `confirmSave: true` only for that confirmed action.
 
 ## Question-container mode

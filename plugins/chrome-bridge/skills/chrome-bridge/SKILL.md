@@ -46,8 +46,11 @@ That file explains:
 - `chrome_bridge_page_dom_outline`: compact DOM outline with headings, forms, controls, landmarks, and text blocks
 - `chrome_bridge_page_summary`: short page summary with the key visible structure
 - `chrome_bridge_wordpress_inspect`: detect WordPress and the active editor context
+- `chrome_bridge_elementor_wait_ready`: wait for the panel and preview document to become usable
 - `chrome_bridge_elementor_inspect`: map Elementor widgets, containers, preview, and panel controls
 - `chrome_bridge_elementor_navigator`: return a compact Elementor hierarchy with stable ids and parent relationships
+- `chrome_bridge_elementor_find_elements`: narrowly search Elementor elements without reading the full tree
+- `chrome_bridge_elementor_audit`: check accessibility names, alt text, headings, ids, labels, overflow, and hit targets
 - `chrome_bridge_elementor_select_element`: select a widget/container by stable Elementor id or semantic fallback
 - `chrome_bridge_elementor_edit_text`: edit widget text through the real Elementor panel control
 - `chrome_bridge_elementor_set_control`: update a named Elementor setting
