@@ -72,13 +72,17 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 ## WordPress and Elementor
 
 - Start with `wordpressInspect` to identify WordPress, the active editor, post id, and preview availability.
-- Use `elementorInspect` to map Elementor sections, containers, widgets, stable `data-id` values, the selected element, and visible panel controls.
+- Use `elementorNavigator` for a compact hierarchy before requesting the larger `elementorInspect` result.
+- Use `elementorInspect` to inspect Elementor sections, containers, widgets, stable `data-id` values, the selected element, and visible panel controls.
 - Use `elementorSelectElement` by `elementId` whenever possible; text, widget type, and map index are fallbacks.
 - Use `elementorEditText` or `elementorSetControl` to change the real editor setting. Do not directly rewrite the preview DOM because that change will not persist.
+- Use `elementorSetControls` for a verified batch of controls on one selected element.
 - Use `elementorPanelTab` to open Content, Style, Advanced, or Layout before looking for controls that are not currently mounted in the panel.
 - Use `elementorAddWidget` for a verified widget drag from the Elements panel into a target container.
+- Use `elementorMoveElement` and `elementorDuplicateElement` for structural work. `elementorDeleteElement` requires `confirmDelete: true`.
 - Use `elementorResponsiveMode` to inspect desktop, tablet, and mobile layouts.
 - Use `elementorUndo` / `elementorRedo` for safe iteration and `elementorPreview` before saving.
+- Use `elementorRunWorkflow` for up to 60 ordered steps. Prefer `stopOnError: true`, `rollbackOnError: true`, and `previewAfter: true`.
 - Use `elementorSave` only after the user explicitly confirms it. Keep `draft`, `update`, and `publish` as distinct modes and pass `confirmSave: true` only for that confirmed action.
 
 ## Question-container mode

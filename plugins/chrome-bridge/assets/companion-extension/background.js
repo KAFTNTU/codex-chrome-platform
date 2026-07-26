@@ -207,9 +207,10 @@ function buildAssistantSystemPrompt(context) {
     'Do not greet the user or start with generic chat like "Hello". If the task is browser-related, immediately work on the page. If the task is unclear, ask one short clarifying question instead of chatting.',
     'The bridge can interact with real page elements. Treat visible inputs, text fields, buttons, links, selects, checkboxes, radios, tabs, dialogs, and other controls as actionable browser targets.',
     'When a page has forms or buttons, prefer the interact map, semantic click, and form assist tools to identify what can be clicked or typed into. If fields are visible, you can work with them directly through the bridge.',
-    'When WordPress or Elementor is detected, use wordpressInspect and elementorInspect before generic page tools. Treat the Elementor preview iframe and settings panel as one editor, identify elements by stable data-id, and prefer elementorSelectElement, elementorEditText, elementorPanelTab, elementorSetControl, elementorAddWidget, elementorResponsiveMode, elementorUndo, elementorRedo, and elementorPreview.',
+    'When WordPress or Elementor is detected, use wordpressInspect and elementorNavigator before generic page tools. Treat the Elementor preview iframe and settings panel as one editor, identify elements by stable data-id, and prefer Elementor-specific actions. Use elementorRunWorkflow for multi-step edits so each step is verified and failures can be rolled back.',
     'For Elementor edits, change one element or control at a time and inspect the result before continuing. Do not mutate preview HTML directly because that does not persist to the Elementor document model.',
     'Never call elementorSave unless the user explicitly asked to save, update, or publish. Pass confirmSave=true only for that explicit request, and keep draft, update, and publish as distinct modes.',
+    'Never call elementorDeleteElement unless the user explicitly asked to remove that exact element. Pass confirmDelete=true only for that exact confirmed deletion.',
     'When a page has repeated blocks, questions, cards, or sections with similar controls, first narrow the scope with scopeToSection or describeSection, then use listSectionControls, clickWithinSection, or fillWithinSection so you act only inside the matched container.',
     'When questionScopedMode is active, the page has already been divided into question:N regions. Do not request or inspect the full-page DOM, full interact map, or body text. Read the compact pageQuestionMap once, then request pageQuestionMap with questionNumber=N only when local details are needed.',
     'In questionScopedMode, every interaction must stay inside one named question container. Use sectionNeedle such as "Запитання 1" and a separate controlNeedle for the local control. Never fall back to a global click when a scoped action fails.',
@@ -235,7 +236,7 @@ function buildAssistantSystemPrompt(context) {
     'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: wordpressInspect, elementorInspect, elementorSelectElement, elementorEditText, elementorPanelTab, elementorSetControl, elementorAddWidget, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: wordpressInspect, elementorInspect, elementorNavigator, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -670,11 +671,18 @@ function normalizeCommandAction(action) {
     inspectwordpress: 'wordpressInspect',
     elementorinspect: 'elementorInspect',
     inspectelementor: 'elementorInspect',
+    elementornavigator: 'elementorNavigator',
+    elementortree: 'elementorNavigator',
     elementorselectelement: 'elementorSelectElement',
     elementorselectwidget: 'elementorSelectElement',
     elementoredittext: 'elementorEditText',
     elementorsetcontrol: 'elementorSetControl',
+    elementorsetcontrols: 'elementorSetControls',
+    elementorbatchcontrols: 'elementorSetControls',
     elementoraddwidget: 'elementorAddWidget',
+    elementormoveelement: 'elementorMoveElement',
+    elementorduplicateelement: 'elementorDuplicateElement',
+    elementordeleteelement: 'elementorDeleteElement',
     elementorpaneltab: 'elementorPanelTab',
     elementoropenpaneltab: 'elementorPanelTab',
     elementorresponsive: 'elementorResponsiveMode',
@@ -682,6 +690,8 @@ function normalizeCommandAction(action) {
     elementorundo: 'elementorUndo',
     elementorredo: 'elementorRedo',
     elementorpreview: 'elementorPreview',
+    elementorrunworkflow: 'elementorRunWorkflow',
+    elementorworkflow: 'elementorRunWorkflow',
     elementorsave: 'elementorSave',
   };
   return aliasMap[compact] || aliasMap[lower] || raw;
@@ -3435,7 +3445,7 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
       hasPreviewFrame: !!frame,
       previewAccessible: !!previewDocument,
       capabilities: editorDetected
-        ? ['inspect', 'select-element', 'edit-text', 'set-control', 'add-widget', 'responsive-mode', 'undo-redo', 'preview', 'confirmed-save']
+        ? ['inspect', 'navigator', 'select-element', 'edit-text', 'batch-controls', 'add-widget', 'move', 'duplicate', 'confirmed-delete', 'workflow', 'responsive-mode', 'undo-redo', 'preview', 'confirmed-save']
         : ['inspect-page', 'generic-dom-tools'],
     });
     if (payload.operation === 'wordpressInspect') return inspectWordPress();
@@ -3540,14 +3550,15 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
         || controls.find((el) => lower(controlLabel(el)).includes(target))
         || null;
     };
-    const setNativeValue = (el, value) => {
+    const setNativeValue = (el, value, options = {}) => {
       const normalized = String(value ?? '');
+      const useHtml = options.html === true || payload.html === true;
       const tinyMceId = el.tagName === 'IFRAME' && /_ifr$/.test(el.id || '')
         ? el.id.replace(/_ifr$/, '')
         : el.id || '';
       const tinyMceEditor = tinyMceId && window.tinymce?.get?.(tinyMceId);
       if (tinyMceEditor) {
-        tinyMceEditor.setContent(payload.html === true ? normalized : norm(normalized));
+        tinyMceEditor.setContent(useHtml ? normalized : norm(normalized));
         tinyMceEditor.fire('input');
         tinyMceEditor.fire('change');
         tinyMceEditor.save();
@@ -3560,7 +3571,7 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
         const body = el.contentDocument?.body;
         if (!body) throw new Error('Rich text iframe is not accessible.');
         body.focus();
-        if (payload.html === true) body.innerHTML = normalized;
+        if (useHtml) body.innerHTML = normalized;
         else body.textContent = normalized;
         body.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: normalized }));
         body.dispatchEvent(new Event('change', { bubbles: true }));
@@ -3568,13 +3579,14 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
       }
       el.focus();
       if (el.type === 'checkbox' || el.type === 'radio') {
-        el.checked = payload.checked != null ? !!payload.checked : ['1', 'true', 'yes', 'on'].includes(lower(normalized));
+        const checkedValue = options.checked != null ? options.checked : payload.checked;
+        el.checked = checkedValue != null ? !!checkedValue : ['1', 'true', 'yes', 'on'].includes(lower(normalized));
       } else if (el.tagName === 'SELECT') {
         const option = Array.from(el.options || []).find((item) => item.value === normalized || lower(item.textContent) === lower(normalized));
         if (!option) throw new Error(`Elementor control option not found: ${normalized}`);
         el.value = option.value;
       } else if (el.isContentEditable) {
-        if (payload.html === true) el.innerHTML = normalized;
+        if (useHtml) el.innerHTML = normalized;
         else el.textContent = normalized;
       } else if ('value' in el) {
         const prototype = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
@@ -3612,6 +3624,38 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
         elements: described,
         panelControls: controls,
         selectedElement: described.find((item) => item.selected) || null,
+      };
+    }
+
+    if (payload.operation === 'elementorNavigator') {
+      const items = elementNodes();
+      const maxItems = Math.max(1, Math.min(500, Number(payload.maxItems || 250)));
+      const tree = items.slice(0, maxItems).map((el, index) => {
+        let depth = 0;
+        let parent = el.parentElement?.closest?.('.elementor-element[data-id], [data-elementor-id]');
+        while (parent && depth < 20) {
+          depth += 1;
+          parent = parent.parentElement?.closest?.('.elementor-element[data-id], [data-elementor-id]');
+        }
+        const item = describeElement(el, index);
+        return {
+          elementId: item.elementId,
+          parentId: item.parentId,
+          depth,
+          elementType: item.elementType,
+          widgetType: item.widgetType,
+          text: item.text.slice(0, Math.max(40, Number(payload.textLimit || 140))),
+          selected: item.selected,
+          visible: item.visible,
+        };
+      });
+      return {
+        ok: true,
+        product: 'elementor',
+        postId,
+        elementCount: items.length,
+        truncated: items.length > tree.length,
+        tree,
       };
     }
 
@@ -3670,6 +3714,54 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
       }
     }
 
+    if (payload.operation === 'elementorSetControls') {
+      if (!Array.isArray(payload.controls) || !payload.controls.length) {
+        return { ok: false, error: 'elementorSetControls requires a non-empty controls array.' };
+      }
+      if (payload.controls.length > 40) {
+        return { ok: false, error: 'A single Elementor batch is limited to 40 controls.' };
+      }
+      if (payload.elementId || payload.index != null || payload.text || payload.textNeedle || payload.widgetType) {
+        const resolved = resolveElement();
+        if (!resolved.element) return { ok: false, error: 'No matching Elementor element was found in the preview.' };
+        await clickElement(resolved.element);
+      }
+      const results = [];
+      for (const item of payload.controls) {
+        const name = item?.controlName || item?.setting || item?.label || '';
+        const control = findControl(name);
+        if (!control) {
+          results.push({ ok: false, controlName: name, error: 'Control not found.' });
+          if (payload.stopOnError !== false) break;
+          continue;
+        }
+        try {
+          const appliedValue = setNativeValue(control, item.value ?? item.content ?? '', {
+            html: item.html === true,
+            checked: item.checked,
+          });
+          await new Promise((resolve) => setTimeout(resolve, Math.max(80, Number(item.waitMs || 160))));
+          results.push({
+            ok: true,
+            controlName: name,
+            setting: control.getAttribute('data-setting') || null,
+            appliedValue: String(appliedValue || '').slice(0, 500),
+          });
+        } catch (error) {
+          results.push({ ok: false, controlName: name, error: error?.message || String(error) });
+          if (payload.stopOnError !== false) break;
+        }
+      }
+      const failed = results.filter((item) => !item.ok);
+      return {
+        ok: failed.length === 0 && results.length === payload.controls.length,
+        changed: results.some((item) => item.ok),
+        saved: false,
+        results,
+        error: failed[0]?.error || null,
+      };
+    }
+
     if (payload.operation === 'elementorAddWidget') {
       const widgetNeedle = lower(payload.widgetType || payload.widget || 'html');
       const paletteItems = Array.from(document.querySelectorAll(
@@ -3714,6 +3806,104 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
         afterCount: after.length,
         addedElement: after.length > beforeCount ? describeElement(after[after.length - 1], after.length - 1) : null,
         error: after.length > beforeCount ? null : 'The drag gesture was sent, but Elementor did not report a new element. The panel may need to be switched to the Elements view.',
+      };
+    }
+
+    if (payload.operation === 'elementorMoveElement') {
+      if (!payload.sourceElementId || !payload.targetElementId) {
+        return { ok: false, error: 'elementorMoveElement requires sourceElementId and targetElementId.' };
+      }
+      const sourceId = escapeCss(payload.sourceElementId);
+      const targetId = escapeCss(payload.targetElementId);
+      const source = previewDocument.querySelector(`.elementor-element[data-id="${sourceId}"], [data-elementor-id="${sourceId}"]`);
+      const targetElement = previewDocument.querySelector(`.elementor-element[data-id="${targetId}"], [data-elementor-id="${targetId}"]`);
+      if (!source || !targetElement) return { ok: false, error: 'Source or target Elementor element was not found.' };
+      if (source === targetElement || source.contains(targetElement)) {
+        return { ok: false, error: 'Cannot move an Elementor element into itself or one of its descendants.' };
+      }
+      const target = targetElement.querySelector('.e-con-inner, .elementor-widget-wrap, .elementor-column-wrap') || targetElement;
+      const before = describeElement(source, elementNodes().indexOf(source));
+      const targetContainedSourceBefore = targetElement.contains(source);
+      source.scrollIntoView({ block: 'center' });
+      target.scrollIntoView({ block: 'center' });
+      const dataTransfer = new DataTransfer();
+      const drag = (node, type, view) => {
+        const rect = node.getBoundingClientRect();
+        node.dispatchEvent(new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          view,
+        }));
+      };
+      drag(source, 'dragstart', frame.contentWindow);
+      drag(target, 'dragenter', frame.contentWindow);
+      drag(target, 'dragover', frame.contentWindow);
+      drag(target, 'drop', frame.contentWindow);
+      drag(source, 'dragend', frame.contentWindow);
+      await new Promise((resolve) => setTimeout(resolve, Math.max(500, Number(payload.waitMs || 1000))));
+      const moved = previewDocument.querySelector(`.elementor-element[data-id="${sourceId}"], [data-elementor-id="${sourceId}"]`);
+      const after = moved ? describeElement(moved, elementNodes().indexOf(moved)) : null;
+      const changed = !!after && (
+        after.parentId !== before.parentId
+        || (!targetContainedSourceBefore && targetElement.contains(moved))
+      );
+      return {
+        ok: changed,
+        before,
+        after,
+        error: changed ? null : 'Elementor did not confirm a changed parent or position after the drag.',
+      };
+    }
+
+    if (payload.operation === 'elementorDuplicateElement' || payload.operation === 'elementorDeleteElement') {
+      const deleting = payload.operation === 'elementorDeleteElement';
+      if (deleting && payload.confirmDelete !== true) {
+        return { ok: false, confirmationRequired: true, error: 'Set confirmDelete=true only after the user explicitly confirms deletion.' };
+      }
+      const resolved = resolveElement();
+      if (!resolved.element) return { ok: false, error: 'No matching Elementor element was found in the preview.' };
+      const beforeCount = elementNodes().length;
+      const selected = describeElement(resolved.element, resolved.index);
+      await clickElement(resolved.element);
+      const actionSelectors = deleting
+        ? ['.elementor-editor-element-remove', '.elementor-editor-element-delete']
+        : ['.elementor-editor-element-duplicate', '.elementor-editor-element-clone'];
+      const actionControl = actionSelectors.map((selector) => previewDocument.querySelector(selector)).find((el) => el && visible(el));
+      if (actionControl) {
+        actionControl.click();
+      } else {
+        const key = deleting ? 'Delete' : 'd';
+        previewDocument.dispatchEvent(new KeyboardEvent('keydown', {
+          key,
+          code: deleting ? 'Delete' : 'KeyD',
+          ctrlKey: !deleting,
+          metaKey: false,
+          bubbles: true,
+          cancelable: true,
+        }));
+        previewDocument.dispatchEvent(new KeyboardEvent('keyup', {
+          key,
+          code: deleting ? 'Delete' : 'KeyD',
+          ctrlKey: !deleting,
+          metaKey: false,
+          bubbles: true,
+          cancelable: true,
+        }));
+      }
+      await new Promise((resolve) => setTimeout(resolve, Math.max(400, Number(payload.waitMs || 850))));
+      const afterCount = elementNodes().length;
+      const changed = deleting ? afterCount < beforeCount : afterCount > beforeCount;
+      return {
+        ok: changed,
+        action: deleting ? 'delete' : 'duplicate',
+        selected,
+        beforeCount,
+        afterCount,
+        confirmationUsed: deleting,
+        error: changed ? null : `Elementor did not confirm the ${deleting ? 'deletion' : 'duplication'}.`,
       };
     }
 
@@ -3832,6 +4022,91 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
   }, [{ operation, ...params }], tabId);
 }
 
+async function elementorRunWorkflow(params = {}, tabId = null) {
+  const steps = Array.isArray(params.steps) ? params.steps : [];
+  if (!steps.length) return { ok: false, error: 'elementorRunWorkflow requires a non-empty steps array.' };
+  if (steps.length > 60) return { ok: false, error: 'An Elementor workflow is limited to 60 steps.' };
+  const allowed = new Set([
+    'elementorInspect',
+    'elementorNavigator',
+    'elementorSelectElement',
+    'elementorEditText',
+    'elementorSetControl',
+    'elementorSetControls',
+    'elementorAddWidget',
+    'elementorMoveElement',
+    'elementorDuplicateElement',
+    'elementorDeleteElement',
+    'elementorPanelTab',
+    'elementorResponsiveMode',
+    'elementorUndo',
+    'elementorRedo',
+    'elementorPreview',
+  ]);
+  const mutating = new Set([
+    'elementorEditText',
+    'elementorSetControl',
+    'elementorSetControls',
+    'elementorAddWidget',
+    'elementorMoveElement',
+    'elementorDuplicateElement',
+    'elementorDeleteElement',
+  ]);
+  const results = [];
+  let successfulMutations = 0;
+  for (let index = 0; index < steps.length; index += 1) {
+    const step = steps[index] || {};
+    const action = normalizeCommandAction(step.action || step.operation || '');
+    if (!allowed.has(action)) {
+      results.push({ index, action, ok: false, error: `Unsupported Elementor workflow action: ${action || '(empty)'}` });
+      break;
+    }
+    const stepParams = { ...(step.params || {}) };
+    if (action === 'elementorDeleteElement' && stepParams.confirmDelete !== true) {
+      results.push({ index, action, ok: false, confirmationRequired: true, error: 'Deletion in a workflow requires confirmDelete=true on that exact step.' });
+      break;
+    }
+    const result = await elementorBridgeAction(action, stepParams, tabId);
+    results.push({ index, action, ok: result?.ok !== false, result });
+    if (result?.ok !== false && mutating.has(action)) successfulMutations += 1;
+    if (result?.ok === false && params.stopOnError !== false) break;
+  }
+  const failed = results.find((entry) => !entry.ok);
+  const rollback = [];
+  if (failed && params.rollbackOnError === true && successfulMutations > 0) {
+    for (let index = 0; index < successfulMutations; index += 1) {
+      const result = await elementorBridgeAction('elementorUndo', {}, tabId);
+      rollback.push(result);
+      if (result?.ok === false) break;
+    }
+  }
+  let preview = null;
+  if (!failed && params.previewAfter !== false) {
+    preview = await elementorBridgeAction('elementorPreview', {}, tabId);
+  }
+  let save = null;
+  if (!failed && params.saveMode) {
+    save = await elementorBridgeAction('elementorSave', {
+      mode: params.saveMode,
+      confirmSave: params.confirmSave === true,
+      waitMs: params.waitMs,
+    }, tabId);
+  }
+  const ok = !failed && (!save || save.ok !== false);
+  return {
+    ok,
+    executedSteps: results.length,
+    successfulMutations,
+    results,
+    rollbackAttempted: rollback.length > 0,
+    rollback,
+    preview,
+    save,
+    saved: save?.ok === true,
+    error: failed?.error || failed?.result?.error || save?.error || null,
+  };
+}
+
 async function handleCommand(command) {
   const params = command.params || {};
   const normalizedAction = normalizeCommandAction(command.action);
@@ -3905,10 +4180,15 @@ async function handleCommand(command) {
       return await waitForPageReady(params.tabId ?? null, params.timeoutMs || 15000);
     case 'wordpressInspect':
     case 'elementorInspect':
+    case 'elementorNavigator':
     case 'elementorSelectElement':
     case 'elementorEditText':
     case 'elementorSetControl':
+    case 'elementorSetControls':
     case 'elementorAddWidget':
+    case 'elementorMoveElement':
+    case 'elementorDuplicateElement':
+    case 'elementorDeleteElement':
     case 'elementorPanelTab':
     case 'elementorResponsiveMode':
     case 'elementorUndo':
@@ -3916,6 +4196,8 @@ async function handleCommand(command) {
     case 'elementorPreview':
     case 'elementorSave':
       return await elementorBridgeAction(normalizedAction, params, params.tabId ?? null);
+    case 'elementorRunWorkflow':
+      return await elementorRunWorkflow(params, params.tabId ?? null);
     case 'openAtoModule':
       return await openAtoModule(params.moduleKey || params.module || '', {
         timeoutMs: params.timeoutMs || 18000,

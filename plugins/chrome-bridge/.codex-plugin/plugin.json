@@ -1,12 +1,18 @@
 {
   "name": "chrome-bridge",
-  "version": "0.3.0",
+  "version": "0.4.0+codex.20260726210946",
   "description": "Local Codex bridge for controlling the active Chrome tab through a companion extension.",
   "author": {
     "name": "OpenAI Codex + Admin"
   },
   "license": "MIT",
-  "keywords": ["chrome", "browser", "bridge", "automation", "mcp"],
+  "keywords": [
+    "chrome",
+    "browser",
+    "bridge",
+    "automation",
+    "mcp"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
@@ -15,7 +21,11 @@
     "longDescription": "Adds a local MCP bridge plus a companion Chrome extension so Codex can inspect, scroll, click, type, read the active tab, and work with structured editors such as WordPress Elementor.",
     "developerName": "OpenAI Codex",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Read", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": [
       "Use Chrome Bridge to inspect my active tab.",
       "Scroll the current page and summarize what changed.",

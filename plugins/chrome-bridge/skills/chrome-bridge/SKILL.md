@@ -47,14 +47,20 @@ That file explains:
 - `chrome_bridge_page_summary`: short page summary with the key visible structure
 - `chrome_bridge_wordpress_inspect`: detect WordPress and the active editor context
 - `chrome_bridge_elementor_inspect`: map Elementor widgets, containers, preview, and panel controls
+- `chrome_bridge_elementor_navigator`: return a compact Elementor hierarchy with stable ids and parent relationships
 - `chrome_bridge_elementor_select_element`: select a widget/container by stable Elementor id or semantic fallback
 - `chrome_bridge_elementor_edit_text`: edit widget text through the real Elementor panel control
 - `chrome_bridge_elementor_set_control`: update a named Elementor setting
+- `chrome_bridge_elementor_set_controls`: update and verify several controls on one element
 - `chrome_bridge_elementor_add_widget`: add a widget through verified drag-and-drop
+- `chrome_bridge_elementor_move_element`: move an element into another container and verify its hierarchy
+- `chrome_bridge_elementor_duplicate_element`: duplicate an Elementor element and verify the new node
+- `chrome_bridge_elementor_delete_element`: delete only after explicit confirmation
 - `chrome_bridge_elementor_panel_tab`: open Content, Style, Advanced, or Layout controls
 - `chrome_bridge_elementor_responsive_mode`: switch desktop/tablet/mobile preview
 - `chrome_bridge_elementor_undo` / `chrome_bridge_elementor_redo`: safely iterate editor changes
 - `chrome_bridge_elementor_preview`: open preview without saving
+- `chrome_bridge_elementor_run_workflow`: run a verified multi-step edit with optional rollback and preview
 - `chrome_bridge_elementor_save`: confirmed draft/update/publish action
 - `chrome_bridge_page_section_reader`: split the page into logical sections
 - `chrome_bridge_find_dom_control`: find a control by text, label, placeholder, name, id, or role

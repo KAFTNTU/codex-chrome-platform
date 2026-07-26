@@ -27,7 +27,7 @@ I’m designed for real browser tasks, not just demos:
 - Keep related tabs together in a Codex workspace tab group.
 - Help with guarded file uploads when the file already belongs to you.
 - Work with pages like ATutor, Moodle, GitHub, dashboards, internal tools, and similar web apps.
-- Work inside WordPress and Elementor as a structured editor: inspect widgets, select elements, edit settings, test responsive layouts, preview changes, and save only after confirmation.
+- Work inside WordPress and Elementor as a structured editor: map the Navigator tree, select and move elements, batch-edit settings, duplicate widgets, test responsive layouts, preview changes, and save only after confirmation.
 
 ## WordPress and Elementor
 
@@ -36,13 +36,15 @@ I can treat Elementor as an editor instead of a flat webpage. I read both the se
 The practical workflow is:
 
 1. Detect WordPress and the current editor with `chrome_bridge_wordpress_inspect`.
-2. Map Elementor elements and panel controls with `chrome_bridge_elementor_inspect`.
+2. Map the compact Elementor hierarchy with `chrome_bridge_elementor_navigator`, then inspect only the relevant widget and controls.
 3. Select one widget or container by id, text, type, or map index.
-4. Edit its text or a named Elementor setting, then inspect the result.
-5. Check desktop, tablet, and mobile modes and open preview.
-6. Save as draft, update, or publish only after an explicit confirmation.
+4. Edit text, apply one setting, or apply a verified batch with `chrome_bridge_elementor_set_controls`.
+5. Move or duplicate elements, add widgets, and use undo when an experiment does not work.
+6. Run a multi-step plan with `chrome_bridge_elementor_run_workflow`; it can stop on failure, roll back successful mutations, and preview the result.
+7. Check desktop, tablet, and mobile modes.
+8. Save as draft, update, or publish only after an explicit confirmation.
 
-Available Elementor tools include selecting widgets, editing text, setting panel controls, adding a widget by drag-and-drop, responsive mode switching, undo/redo, preview, and confirmed save. Direct preview-DOM edits are intentionally avoided because they would disappear instead of updating Elementor's document model.
+The workflow can work independently through routine reversible edits without asking after every click. Deleting an Elementor element still requires `confirmDelete: true`, and saving or publishing still requires `confirmSave: true`. Direct preview-DOM edits are intentionally avoided because they would disappear instead of updating Elementor's document model.
 
 ## Two access profiles
 
