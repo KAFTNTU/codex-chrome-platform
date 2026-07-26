@@ -72,6 +72,10 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 ## WordPress and Elementor
 
 - Start with `wordpressInspect` to identify WordPress, the active editor, post id, and preview availability.
+- Use `wordpressAdminInspect` to map admin menus, notices, and list-table rows.
+- Use `wordpressContentList` to search the current Posts, Pages, Media, Plugins, Themes, or Users screen.
+- Use `wordpressPluginThemeAudit` only as a read-only update/version audit.
+- Use `wordpressOpenAdminSection` for same-site navigation to known WordPress admin sections.
 - Use `elementorWaitReady` before editing when the preview iframe or settings panel is still loading.
 - Use `elementorFindElements` for a narrow search by text, widget type, element type, parent id, or visibility.
 - Use `elementorNavigator` for a compact hierarchy before requesting the larger `elementorInspect` result.
@@ -86,6 +90,7 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `elementorUndo` / `elementorRedo` for safe iteration and `elementorPreview` before saving.
 - Use `elementorRunWorkflow` for up to 60 ordered steps. Prefer `stopOnError: true`, `rollbackOnError: true`, and `previewAfter: true`.
 - Use `elementorAudit` after substantial edits. It performs technical accessibility/layout checks without judging content quality.
+- Use `elementorQualitySuite` for style tokens, links, forms, performance, language, layout, and template diagnostics.
 - Use `elementorCreateCheckpoint` before a substantial workflow and `elementorCompareCheckpoint` afterward to report exact structural changes.
 - Use `elementorResponsiveAudit` to audit desktop, tablet, and mobile previews in one verified action.
 - Use `elementorSave` only after the user explicitly confirms it. Keep `draft`, `update`, and `publish` as distinct modes and pass `confirmSave: true` only for that confirmed action.

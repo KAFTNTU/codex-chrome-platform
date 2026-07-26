@@ -46,11 +46,16 @@ That file explains:
 - `chrome_bridge_page_dom_outline`: compact DOM outline with headings, forms, controls, landmarks, and text blocks
 - `chrome_bridge_page_summary`: short page summary with the key visible structure
 - `chrome_bridge_wordpress_inspect`: detect WordPress and the active editor context
+- `chrome_bridge_wordpress_admin_inspect`: map WordPress admin menus, notices, and list tables
+- `chrome_bridge_wordpress_content_list`: filter content visible in the current WordPress admin table
+- `chrome_bridge_wordpress_plugin_theme_audit`: read plugin/theme versions and update notices without changing them
+- `chrome_bridge_wordpress_open_admin_section`: navigate safely within the same site's admin sections
 - `chrome_bridge_elementor_wait_ready`: wait for the panel and preview document to become usable
 - `chrome_bridge_elementor_inspect`: map Elementor widgets, containers, preview, and panel controls
 - `chrome_bridge_elementor_navigator`: return a compact Elementor hierarchy with stable ids and parent relationships
 - `chrome_bridge_elementor_find_elements`: narrowly search Elementor elements without reading the full tree
 - `chrome_bridge_elementor_audit`: check accessibility names, alt text, headings, ids, labels, overflow, and hit targets
+- `chrome_bridge_elementor_quality_suite`: inspect style tokens, links, forms, performance, languages, layout, and templates
 - `chrome_bridge_elementor_responsive_audit`: audit desktop, tablet, and mobile previews and restore the editor mode
 - `chrome_bridge_elementor_create_checkpoint`: store a named session snapshot of the Elementor hierarchy
 - `chrome_bridge_elementor_compare_checkpoint`: report elements added, removed, moved, or changed since a checkpoint

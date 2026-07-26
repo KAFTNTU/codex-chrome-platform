@@ -237,7 +237,7 @@ function buildAssistantSystemPrompt(context) {
     'Never click buttons or links that finalize, submit, finish, send, or complete a test/quiz/exam attempt. You may inspect the page and explain state, but do not finalize a test flow.',
     'Be concise and practical. If you need browser interaction, describe the next browser action clearly.',
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
-    'Available bridge skills include: wordpressInspect, elementorWaitReady, elementorInspect, elementorNavigator, elementorFindElements, elementorAudit, elementorResponsiveAudit, elementorCreateCheckpoint, elementorCompareCheckpoint, elementorListCheckpoints, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
+    'Available bridge skills include: wordpressInspect, wordpressAdminInspect, wordpressContentList, wordpressPluginThemeAudit, wordpressOpenAdminSection, elementorWaitReady, elementorInspect, elementorNavigator, elementorFindElements, elementorAudit, elementorQualitySuite, elementorResponsiveAudit, elementorCreateCheckpoint, elementorCompareCheckpoint, elementorListCheckpoints, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -670,6 +670,11 @@ function normalizeCommandAction(action) {
     pagewizardprev: 'pageWizardPrev',
     wordpressinspect: 'wordpressInspect',
     inspectwordpress: 'wordpressInspect',
+    wordpressadmininspect: 'wordpressAdminInspect',
+    wordpressadminmap: 'wordpressAdminInspect',
+    wordpresscontentlist: 'wordpressContentList',
+    wordpresspluginthemeaudit: 'wordpressPluginThemeAudit',
+    wordpressopenadminsection: 'wordpressOpenAdminSection',
     elementorinspect: 'elementorInspect',
     inspectelementor: 'elementorInspect',
     elementorwaitready: 'elementorWaitReady',
@@ -680,6 +685,8 @@ function normalizeCommandAction(action) {
     elementorfind: 'elementorFindElements',
     elementoraudit: 'elementorAudit',
     auditelementor: 'elementorAudit',
+    elementorqualitysuite: 'elementorQualitySuite',
+    elementorqualityaudit: 'elementorQualitySuite',
     elementorresponsiveaudit: 'elementorResponsiveAudit',
     elementorcreatecheckpoint: 'elementorCreateCheckpoint',
     elementorcheckpoint: 'elementorCreateCheckpoint',
@@ -3462,6 +3469,64 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
         : ['inspect-page', 'generic-dom-tools'],
     });
     if (payload.operation === 'wordpressInspect') return inspectWordPress();
+    if (['wordpressAdminInspect', 'wordpressContentList', 'wordpressPluginThemeAudit'].includes(payload.operation)) {
+      const wordpress = inspectWordPress();
+      if (!wordpress.isAdmin) return { ok: false, error: 'The current page is not a WordPress admin screen.', wordpress };
+      const menuItems = Array.from(document.querySelectorAll('#adminmenu a[href]')).map((link) => ({
+        text: norm(link.textContent),
+        href: link.href,
+        current: link.closest('li')?.classList.contains('current') || link.getAttribute('aria-current') === 'page',
+      })).filter((item) => item.text);
+      const notices = Array.from(document.querySelectorAll('.notice, .updated, .error, .update-nag')).map((el) => ({
+        type: Array.from(el.classList).find((name) => /notice-|error|updated/.test(name)) || 'notice',
+        text: norm(el.textContent).slice(0, 500),
+      })).filter((item) => item.text);
+      const rows = Array.from(document.querySelectorAll('.wp-list-table tbody tr')).map((row, index) => {
+        const primary = row.querySelector('.row-title, .column-primary strong a, .plugin-title strong, .theme-title');
+        const actions = Array.from(row.querySelectorAll('.row-actions a[href], .row-actions button')).map((action) => ({
+          text: norm(action.textContent),
+          href: action.href || null,
+        }));
+        return {
+          index,
+          title: norm(primary?.textContent || row.querySelector('.column-primary')?.textContent || '').slice(0, 240),
+          status: norm(row.querySelector('.post-state, .status, .column-status')?.textContent || '').slice(0, 120),
+          date: norm(row.querySelector('.column-date')?.textContent || '').slice(0, 120),
+          author: norm(row.querySelector('.column-author')?.textContent || '').slice(0, 120),
+          version: norm(row.querySelector('.plugin-version-author-uri, .column-version')?.textContent || '').slice(0, 180),
+          updateAvailable: row.classList.contains('update') || !!row.querySelector('.update-message, .update-now'),
+          actions,
+        };
+      }).filter((row) => row.title);
+      if (payload.operation === 'wordpressContentList') {
+        const needle = lower(payload.query || payload.text || '');
+        const filtered = rows.filter((row) => !needle || lower(row.title).includes(needle));
+        return { ok: true, screen: document.body?.className || '', count: filtered.length, items: filtered.slice(0, Math.max(1, Number(payload.limit || 100))) };
+      }
+      if (payload.operation === 'wordpressPluginThemeAudit') {
+        return {
+          ok: true,
+          screen: document.body?.className || '',
+          itemCount: rows.length,
+          updatesAvailable: rows.filter((row) => row.updateAvailable).length,
+          items: rows,
+          notices,
+          note: 'Read-only audit. It does not update, activate, deactivate, install, or delete anything.',
+        };
+      }
+      return {
+        ok: true,
+        wordpress,
+        screen: {
+          title: norm(document.querySelector('.wrap h1, .wrap h2, h1.wp-heading-inline')?.textContent || document.title),
+          url: location.href,
+          bodyClasses: String(document.body?.className || ''),
+        },
+        menuItems,
+        notices,
+        tableRows: rows.slice(0, Math.max(1, Number(payload.limit || 50))),
+      };
+    }
     if (!editorDetected) {
       return { ok: false, error: 'Elementor editor was not detected on the current page.', wordpress: inspectWordPress() };
     }
@@ -3845,6 +3910,146 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
       };
     }
 
+    if (payload.operation === 'elementorQualitySuite') {
+      const rootStyle = previewDocument.defaultView.getComputedStyle(previewDocument.documentElement);
+      const tokens = [];
+      for (let index = 0; index < rootStyle.length; index += 1) {
+        const name = rootStyle[index];
+        if (!name.startsWith('--')) continue;
+        if (!/elementor|e-global|wp--preset|global-color|global-typography/i.test(name)) continue;
+        tokens.push({ name, value: norm(rootStyle.getPropertyValue(name)) });
+      }
+      const links = Array.from(previewDocument.querySelectorAll('a')).map((link) => ({
+        text: norm(link.textContent).slice(0, 160),
+        href: link.getAttribute('href'),
+        absoluteHref: link.href || null,
+        elementId: link.closest('.elementor-element[data-id]')?.getAttribute('data-id') || null,
+      }));
+      const linkIssues = links.map((link) => {
+        if (!link.href) return { ...link, issue: 'missing-href' };
+        if (link.href === '#') return { ...link, issue: 'placeholder-anchor' };
+        if (/^javascript:/i.test(link.href)) return { ...link, issue: 'javascript-url' };
+        if (!link.text) return { ...link, issue: 'missing-accessible-text' };
+        return null;
+      }).filter(Boolean);
+      const forms = Array.from(previewDocument.querySelectorAll('form')).map((form, index) => {
+        const controls = Array.from(form.querySelectorAll('input:not([type="hidden"]), select, textarea, button'));
+        const fields = controls.map((control) => {
+          const id = control.id;
+          const labelled = control.hasAttribute('aria-label')
+            || control.hasAttribute('aria-labelledby')
+            || (id && previewDocument.querySelector(`label[for="${escapeCss(id)}"]`))
+            || control.closest('label');
+          return {
+            tag: control.tagName.toLowerCase(),
+            type: control.type || null,
+            name: control.name || null,
+            required: !!control.required,
+            labelled: !!labelled,
+            valid: typeof control.checkValidity === 'function' ? control.checkValidity() : true,
+          };
+        });
+        return {
+          index,
+          action: form.action || null,
+          method: form.method || 'get',
+          fieldCount: fields.length,
+          unlabeledFields: fields.filter((field) => !field.labelled).length,
+          fields,
+        };
+      });
+      const images = Array.from(previewDocument.images).map((image) => ({
+        src: image.currentSrc || image.src,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        renderedWidth: Math.round(image.getBoundingClientRect().width),
+        renderedHeight: Math.round(image.getBoundingClientRect().height),
+        loading: image.loading || 'eager',
+        missingDimensions: !image.hasAttribute('width') || !image.hasAttribute('height'),
+        oversized: image.naturalWidth > Math.max(1600, image.getBoundingClientRect().width * 2.5),
+      }));
+      const allElements = Array.from(previewDocument.body.querySelectorAll('*'));
+      let maxDepth = 0;
+      for (const el of allElements.slice(0, 10000)) {
+        let depth = 0;
+        let parent = el.parentElement;
+        while (parent && depth < 100) {
+          depth += 1;
+          parent = parent.parentElement;
+        }
+        maxDepth = Math.max(maxDepth, depth);
+      }
+      const text = norm(previewDocument.body.innerText);
+      const scriptCounts = {
+        cyrillic: (text.match(/\p{Script=Cyrillic}/gu) || []).length,
+        latin: (text.match(/\p{Script=Latin}/gu) || []).length,
+        digits: (text.match(/\p{Number}/gu) || []).length,
+      };
+      const visibleBlocks = elementNodes().filter(visible).slice(0, 250);
+      const overflow = [];
+      const overlaps = [];
+      const viewportWidth = previewDocument.documentElement.clientWidth;
+      for (const el of visibleBlocks) {
+        const rect = el.getBoundingClientRect();
+        if (rect.left < -2 || rect.right > viewportWidth + 2) {
+          overflow.push(describeElement(el, elementNodes().indexOf(el)));
+        }
+      }
+      for (let leftIndex = 0; leftIndex < visibleBlocks.length; leftIndex += 1) {
+        const left = visibleBlocks[leftIndex];
+        const leftRect = left.getBoundingClientRect();
+        for (let rightIndex = leftIndex + 1; rightIndex < visibleBlocks.length; rightIndex += 1) {
+          const right = visibleBlocks[rightIndex];
+          if (left.contains(right) || right.contains(left)) continue;
+          const rightRect = right.getBoundingClientRect();
+          const overlapWidth = Math.min(leftRect.right, rightRect.right) - Math.max(leftRect.left, rightRect.left);
+          const overlapHeight = Math.min(leftRect.bottom, rightRect.bottom) - Math.max(leftRect.top, rightRect.top);
+          if (overlapWidth > 8 && overlapHeight > 8) {
+            overlaps.push({
+              first: describeElement(left, elementNodes().indexOf(left)),
+              second: describeElement(right, elementNodes().indexOf(right)),
+              overlapWidth: Math.round(overlapWidth),
+              overlapHeight: Math.round(overlapHeight),
+            });
+            if (overlaps.length >= 40) break;
+          }
+        }
+        if (overlaps.length >= 40) break;
+      }
+      const templates = elementNodes().filter((el) => /template|shortcode|global/i.test(widgetTypeFor(el))).map(describeElement);
+      return {
+        ok: true,
+        product: 'elementor',
+        postId,
+        styles: { tokenCount: tokens.length, tokens: tokens.slice(0, 250) },
+        links: { count: links.length, issueCount: linkIssues.length, issues: linkIssues },
+        forms: { count: forms.length, forms },
+        performance: {
+          domElements: allElements.length,
+          elementorElements: elementNodes().length,
+          maxDomDepth: maxDepth,
+          imageCount: images.length,
+          oversizedImages: images.filter((image) => image.oversized),
+          imagesMissingDimensions: images.filter((image) => image.missingDimensions),
+          iframeCount: previewDocument.querySelectorAll('iframe').length,
+          videoCount: previewDocument.querySelectorAll('video').length,
+        },
+        language: {
+          htmlLang: previewDocument.documentElement.lang || null,
+          scriptCounts,
+          mixedCyrillicLatin: scriptCounts.cyrillic > 0 && scriptCounts.latin > 0,
+        },
+        layout: {
+          viewportWidth,
+          scrollWidth: previewDocument.documentElement.scrollWidth,
+          horizontalOverflow: overflow,
+          possibleOverlaps: overlaps,
+        },
+        templates: { count: templates.length, items: templates.slice(0, 100) },
+        note: 'Read-only quality analysis. Safe fixes should be applied through Elementor controls and verified with undo/checkpoints.',
+      };
+    }
+
     if (payload.operation === 'elementorSelectElement' || payload.operation === 'elementorEditText' || payload.operation === 'elementorSetControl') {
       if (
         (payload.operation === 'elementorEditText' || payload.operation === 'elementorSetControl')
@@ -4218,6 +4423,7 @@ async function elementorRunWorkflow(params = {}, tabId = null) {
     'elementorNavigator',
     'elementorFindElements',
     'elementorAudit',
+    'elementorQualitySuite',
     'elementorSelectElement',
     'elementorEditText',
     'elementorSetControl',
@@ -4436,6 +4642,36 @@ async function elementorCheckpointAction(operation, params = {}, tabId = null) {
   return { ok: false, error: `Unsupported Elementor checkpoint operation: ${operation}` };
 }
 
+async function wordpressOpenAdminSection(params = {}, tabId = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const tab = await chrome.tabs.get(resolvedTabId);
+  const current = new URL(tab.url);
+  const section = String(params.section || '').toLowerCase().replace(/[^a-z]/g, '');
+  const paths = {
+    dashboard: '/wp-admin/',
+    posts: '/wp-admin/edit.php',
+    pages: '/wp-admin/edit.php?post_type=page',
+    media: '/wp-admin/upload.php',
+    comments: '/wp-admin/edit-comments.php',
+    themes: '/wp-admin/themes.php',
+    plugins: '/wp-admin/plugins.php',
+    users: '/wp-admin/users.php',
+    tools: '/wp-admin/tools.php',
+    settings: '/wp-admin/options-general.php',
+    menus: '/wp-admin/nav-menus.php',
+    widgets: '/wp-admin/widgets.php',
+    elementortemplates: '/wp-admin/edit.php?post_type=elementor_library',
+    sitehealth: '/wp-admin/site-health.php',
+  };
+  if (!paths[section]) return { ok: false, error: `Unknown WordPress admin section: ${params.section || ''}`, availableSections: Object.keys(paths) };
+  if (!/^https?:$/.test(current.protocol)) return { ok: false, error: 'The active tab is not an HTTP(S) WordPress page.' };
+  const url = new URL(paths[section], current.origin).href;
+  return await navigateAndWait(url, {
+    timeoutMs: params.timeoutMs || 20000,
+    urlContains: '/wp-admin/',
+  }, resolvedTabId);
+}
+
 async function handleCommand(command) {
   const params = command.params || {};
   const normalizedAction = normalizeCommandAction(command.action);
@@ -4508,11 +4744,15 @@ async function handleCommand(command) {
     case 'waitForPageReady':
       return await waitForPageReady(params.tabId ?? null, params.timeoutMs || 15000);
     case 'wordpressInspect':
+    case 'wordpressAdminInspect':
+    case 'wordpressContentList':
+    case 'wordpressPluginThemeAudit':
     case 'elementorWaitReady':
     case 'elementorInspect':
     case 'elementorNavigator':
     case 'elementorFindElements':
     case 'elementorAudit':
+    case 'elementorQualitySuite':
     case 'elementorSelectElement':
     case 'elementorEditText':
     case 'elementorSetControl':
@@ -4528,6 +4768,8 @@ async function handleCommand(command) {
     case 'elementorPreview':
     case 'elementorSave':
       return await elementorBridgeAction(normalizedAction, params, params.tabId ?? null);
+    case 'wordpressOpenAdminSection':
+      return await wordpressOpenAdminSection(params, params.tabId ?? null);
     case 'elementorRunWorkflow':
       return await elementorRunWorkflow(params, params.tabId ?? null);
     case 'elementorResponsiveAudit':

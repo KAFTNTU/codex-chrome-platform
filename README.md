@@ -47,6 +47,10 @@ The practical workflow is:
 
 The workflow can work independently through routine reversible edits without asking after every click. Deleting an Elementor element still requires `confirmDelete: true`, and saving or publishing still requires `confirmSave: true`. Direct preview-DOM edits are intentionally avoided because they would disappear instead of updating Elementor's document model.
 
+`chrome_bridge_elementor_quality_suite` produces one read-only report for global CSS tokens, broken or placeholder links, form labels/validity, image and DOM performance, mixed-language text, overflow/overlap risks, and reusable template widgets.
+
+For WordPress administration, I can map the current admin screen, read posts/pages and other list tables, inspect plugin/theme update notices, and safely navigate to Dashboard, Posts, Pages, Media, Themes, Plugins, Menus, Widgets, Elementor Templates, or Site Health. Plugin installs, activation, updates, deletion, and publishing are not performed by these read-only inspection tools.
+
 ## Two access profiles
 
 I keep the UI simple on purpose:
