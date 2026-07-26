@@ -54,6 +54,16 @@ That file explains:
 - `chrome_bridge_wordpress_open_plugin_search`: open same-site Add Plugins search
 - `chrome_bridge_wordpress_plugin_action`: confirmed install/activate/deactivate/update/delete action
 - `chrome_bridge_wordpress_theme_action`: confirmed install/activate/update/delete action
+- `chrome_bridge_wordpress_media_library` / `chrome_bridge_wordpress_update_media`: inspect media and confirm metadata changes
+- `chrome_bridge_wordpress_revision_list` / `chrome_bridge_wordpress_restore_revision`: inspect or restore content history
+- `chrome_bridge_wordpress_user_role_audit`: inspect names, ids, and roles without credentials or emails
+- `chrome_bridge_wordpress_site_audit` / `chrome_bridge_wordpress_seo_audit`: security, Site Health, and SEO diagnostics
+- `chrome_bridge_wordpress_menu_inspect` / `chrome_bridge_wordpress_menu_item_action`: inspect menus and create confirmed custom items
+- `chrome_bridge_wordpress_schedule_content`: schedule existing content after confirmation
+- `chrome_bridge_wordpress_woocommerce_inspect`: read-only product/WooCommerce detection
+- `chrome_bridge_wordpress_redirect_audit`: find suspicious visible links without changing redirects
+- `chrome_bridge_wordpress_backup_content`: download a local JSON backup
+- `chrome_bridge_wordpress_maintenance_workflow`: backup, one confirmed plugin action, and verification
 - `chrome_bridge_elementor_wait_ready`: wait for the panel and preview document to become usable
 - `chrome_bridge_elementor_inspect`: map Elementor widgets, containers, preview, and panel controls
 - `chrome_bridge_elementor_navigator`: return a compact Elementor hierarchy with stable ids and parent relationships

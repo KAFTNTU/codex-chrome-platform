@@ -80,6 +80,13 @@ It is designed for Codex and other desktop AI agents that can talk to the local 
 - Use `wordpressOpenPluginSearch` before attempting to install a plugin.
 - Use `wordpressPluginAction` / `wordpressThemeAction` only for the exact item and action the user confirmed. Deletion additionally requires `confirmDelete: true`.
 - Re-run `wordpressAdminInspect` or `wordpressPluginThemeAudit` after every write action.
+- Use `wordpressBackupContent` before substantial content or maintenance work.
+- Use `wordpressRevisionList` for read-only history and `wordpressRestoreRevision` only with a separately confirmed revision id.
+- Use `wordpressMediaLibrary` for search and `wordpressUpdateMedia` only for confirmed metadata changes.
+- Use `wordpressSiteAudit`, `wordpressSeoAudit`, `wordpressUserRoleAudit`, `wordpressRedirectAudit`, and `wordpressWooCommerceInspect` as read-only diagnostics.
+- Use `wordpressMenuInspect` before `wordpressMenuItemAction`; menu writes require confirmation.
+- Use `wordpressScheduleContent` only for an existing page/post and an explicitly confirmed future date.
+- Use `wordpressMaintenanceWorkflow` for backup, one confirmed plugin action, and post-action verification.
 - Use `elementorWaitReady` before editing when the preview iframe or settings panel is still loading.
 - Use `elementorFindElements` for a narrow search by text, widget type, element type, parent id, or visibility.
 - Use `elementorNavigator` for a compact hierarchy before requesting the larger `elementorInspect` result.

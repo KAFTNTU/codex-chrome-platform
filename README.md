@@ -53,6 +53,18 @@ For WordPress administration, I can map the current admin screen, read posts/pag
 
 With explicit confirmation, I can also create a new page or post as a **draft**, search the official Add Plugins screen, and use the visible WordPress controls to install, activate, deactivate, or update a plugin or theme. Deletion requires a second `confirmDelete` flag. These tools never publish a new page automatically, and they re-inspect WordPress after a write action.
 
+The WordPress Operations Suite also supports:
+
+- Local JSON backups of pages/posts before changes.
+- Revision listing and confirmed revision restore.
+- Media search plus confirmed `alt`, title, caption, and description updates.
+- SEO, security-header, Site Health, user-role, link/redirect, and WooCommerce read-only audits.
+- Menu inspection and confirmed custom menu-item creation when the site exposes the WordPress menu REST endpoints.
+- Confirmed scheduling of an existing page or post for a future date.
+- A maintenance workflow: backup → one confirmed plugin action → WordPress re-inspection.
+
+Passwords, cookies, API keys, authentication tokens, user emails, orders, and payment data are not returned by these tools.
+
 ## Two access profiles
 
 I keep the UI simple on purpose:

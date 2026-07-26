@@ -80,6 +80,20 @@ TOOLS = [
     {"name":"chrome_bridge_wordpress_open_plugin_search","description":"Open the same WordPress site's Add Plugins search screen for a query.","inputSchema":{"type":"object","properties":{"query":{"type":"string"},"timeoutMs":{"type":"integer"},"tabId":{"type":"integer"}},"required":["query"],"additionalProperties":False}},
     {"name":"chrome_bridge_wordpress_plugin_action","description":"Install, activate, deactivate, update, or delete a visible WordPress plugin only after explicit confirmation.","inputSchema":{"type":"object","properties":{"pluginAction":{"type":"string","enum":["install","activate","deactivate","update","delete"]},"pluginSlug":{"type":"string"},"name":{"type":"string"},"confirmAction":{"type":"boolean"},"confirmDelete":{"type":"boolean"},"waitMs":{"type":"integer"},"tabId":{"type":"integer"}},"required":["pluginAction","confirmAction"],"additionalProperties":False}},
     {"name":"chrome_bridge_wordpress_theme_action","description":"Install, activate, update, or delete a visible WordPress theme only after explicit confirmation.","inputSchema":{"type":"object","properties":{"themeAction":{"type":"string","enum":["install","activate","update","delete"]},"themeSlug":{"type":"string"},"name":{"type":"string"},"confirmAction":{"type":"boolean"},"confirmDelete":{"type":"boolean"},"waitMs":{"type":"integer"},"tabId":{"type":"integer"}},"required":["themeAction","confirmAction"],"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_media_library","description":"Read and search WordPress media metadata through the authenticated REST API.","inputSchema":{"type":"object","properties":{"search":{"type":"string"},"mimeType":{"type":"string"},"limit":{"type":"integer"},"page":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_update_media","description":"Update alt text, title, caption, or description for one media item after confirmation.","inputSchema":{"type":"object","properties":{"mediaId":{"type":"integer"},"altText":{"type":"string"},"title":{"type":"string"},"caption":{"type":"string"},"description":{"type":"string"},"confirmAction":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["mediaId","confirmAction"],"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_revision_list","description":"List revisions for a WordPress page or post.","inputSchema":{"type":"object","properties":{"type":{"type":"string","enum":["page","post"]},"contentId":{"type":"integer"},"limit":{"type":"integer"},"tabId":{"type":"integer"}},"required":["type","contentId"],"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_restore_revision","description":"Restore one WordPress revision only after explicit confirmation.","inputSchema":{"type":"object","properties":{"type":{"type":"string","enum":["page","post"]},"contentId":{"type":"integer"},"revisionId":{"type":"integer"},"confirmRestore":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["type","contentId","revisionId","confirmRestore"],"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_user_role_audit","description":"Audit WordPress user ids, names, roles, and optional capability names without returning credentials or emails.","inputSchema":{"type":"object","properties":{"limit":{"type":"integer"},"includeCapabilities":{"type":"boolean"},"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_site_audit","description":"Audit WordPress SEO, security headers, exposed metadata, and visible Site Health issues.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_seo_audit","description":"Audit title, description, canonical, robots, Open Graph, headings, image alt text, and schema blocks.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_menu_inspect","description":"Inspect WordPress menus and menu items through REST when supported.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_menu_item_action","description":"Create a confirmed custom menu item on a selected menu.","inputSchema":{"type":"object","properties":{"menuId":{"type":"integer"},"title":{"type":"string"},"url":{"type":"string"},"parent":{"type":"integer"},"order":{"type":"integer"},"confirmAction":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["menuId","title","url","confirmAction"],"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_schedule_content","description":"Schedule an existing page or post for a future date only after explicit confirmation.","inputSchema":{"type":"object","properties":{"type":{"type":"string","enum":["page","post"]},"contentId":{"type":"integer"},"date":{"type":"string"},"confirmSchedule":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["type","contentId","date","confirmSchedule"],"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_woocommerce_inspect","description":"Detect WooCommerce and read visible product rows without modifying orders, payments, or products.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_redirect_audit","description":"Audit visible links for missing, placeholder, or javascript URLs without creating redirects.","inputSchema":{"type":"object","properties":{"tabId":{"type":"integer"}},"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_backup_content","description":"Download a local JSON backup of one WordPress page or post before changes.","inputSchema":{"type":"object","properties":{"type":{"type":"string","enum":["page","post"]},"contentId":{"type":"integer"},"filename":{"type":"string"},"saveAs":{"type":"boolean"},"tabId":{"type":"integer"}},"required":["type","contentId"],"additionalProperties":False}},
+    {"name":"chrome_bridge_wordpress_maintenance_workflow","description":"Back up optional content, perform one confirmed plugin action, then re-inspect WordPress.","inputSchema":{"type":"object","properties":{"type":{"type":"string","enum":["page","post"]},"contentId":{"type":"integer"},"pluginAction":{"type":"string","enum":["install","activate","deactivate","update","delete"]},"pluginSlug":{"type":"string"},"name":{"type":"string"},"confirmAction":{"type":"boolean"},"confirmDelete":{"type":"boolean"},"waitMs":{"type":"integer"},"timeoutMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_elementor_wait_ready","description":"Wait until both the Elementor settings panel and preview document are fully available.","inputSchema":{"type":"object","properties":{"timeoutMs":{"type":"integer"},"pollMs":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_elementor_inspect","description":"Inspect the Elementor editor, preview iframe, stable element data-ids, widget types, selected element, and panel controls.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
     {"name":"chrome_bridge_elementor_navigator","description":"Return a compact Elementor hierarchy with stable ids, parent ids, depth, widget types, and short text.","inputSchema":{"type":"object","properties":{"maxItems":{"type":"integer"},"textLimit":{"type":"integer"},"tabId":{"type":"integer"}},"additionalProperties":False}},
@@ -730,6 +744,20 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         "chrome_bridge_wordpress_open_plugin_search":"wordpressOpenPluginSearch",
         "chrome_bridge_wordpress_plugin_action":"wordpressPluginAction",
         "chrome_bridge_wordpress_theme_action":"wordpressThemeAction",
+        "chrome_bridge_wordpress_media_library":"wordpressMediaLibrary",
+        "chrome_bridge_wordpress_update_media":"wordpressUpdateMedia",
+        "chrome_bridge_wordpress_revision_list":"wordpressRevisionList",
+        "chrome_bridge_wordpress_restore_revision":"wordpressRestoreRevision",
+        "chrome_bridge_wordpress_user_role_audit":"wordpressUserRoleAudit",
+        "chrome_bridge_wordpress_site_audit":"wordpressSiteAudit",
+        "chrome_bridge_wordpress_seo_audit":"wordpressSeoAudit",
+        "chrome_bridge_wordpress_menu_inspect":"wordpressMenuInspect",
+        "chrome_bridge_wordpress_menu_item_action":"wordpressMenuItemAction",
+        "chrome_bridge_wordpress_schedule_content":"wordpressScheduleContent",
+        "chrome_bridge_wordpress_woocommerce_inspect":"wordpressWooCommerceInspect",
+        "chrome_bridge_wordpress_redirect_audit":"wordpressRedirectAudit",
+        "chrome_bridge_wordpress_backup_content":"wordpressBackupContent",
+        "chrome_bridge_wordpress_maintenance_workflow":"wordpressMaintenanceWorkflow",
         "chrome_bridge_elementor_wait_ready":"elementorWaitReady",
         "chrome_bridge_elementor_inspect":"elementorInspect",
         "chrome_bridge_elementor_navigator":"elementorNavigator",
@@ -768,6 +796,8 @@ def handle_tool(name:str,arguments:dict[str,Any])->dict[str,Any]:
         if "limit" in payload: payload["limit"]=int(payload["limit"])
         if "maxIssues" in payload: payload["maxIssues"]=int(payload["maxIssues"])
         if "maxAuditIssues" in payload: payload["maxAuditIssues"]=int(payload["maxAuditIssues"])
+        for field in ("mediaId","contentId","revisionId","menuId","parent","order","page"):
+            if field in payload: payload[field]=int(payload[field])
         return as_text_content(call_bridge(elementor_tools[name],payload))
     raise ValueError(f"Unknown tool: {name}")
 def main()->None:

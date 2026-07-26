@@ -239,6 +239,7 @@ function buildAssistantSystemPrompt(context) {
     'Draft file attachments may include screenshots, DOCX/PDF text extracts, or archive previews. Use screenshot images as visual context, and use extracted text from documents and archives as direct evidence when answering.',
     'Available bridge skills include: wordpressInspect, wordpressAdminInspect, wordpressContentList, wordpressPluginThemeAudit, wordpressOpenAdminSection, wordpressCreateDraft, wordpressOpenPluginSearch, wordpressPluginAction, wordpressThemeAction, elementorWaitReady, elementorInspect, elementorNavigator, elementorFindElements, elementorAudit, elementorQualitySuite, elementorResponsiveAudit, elementorCreateCheckpoint, elementorCompareCheckpoint, elementorListCheckpoints, elementorSelectElement, elementorEditText, elementorSetControl, elementorSetControls, elementorAddWidget, elementorMoveElement, elementorDuplicateElement, elementorDeleteElement, elementorPanelTab, elementorResponsiveMode, elementorUndo, elementorRedo, elementorPreview, elementorRunWorkflow, elementorSave, pageSummary, pageQuestionMap, pageDomOutline, pageDomSnapshot, pageSectionReader, scopeToSection, listSectionControls, clickWithinSection, fillWithinSection, describeSection, pageInteractMap, pageInteractClick, semanticClick, findDomControl, universalFormAssist, OCR from screenshot, pageDiffMemory, siteMemorySnapshot, pageRegionMemory, workspace tabs, file upload assistant, and searchWeb.',
     'WordPress creation is draft-only. Plugin/theme install, activate, deactivate, update, or delete actions require explicit confirmation flags. After any WordPress write action, re-inspect the admin screen before claiming success.',
+    'For WordPress maintenance, prefer this order: site/SEO/role/media audit, local JSON backup, one explicitly confirmed write action, then re-inspection. Revision restore, scheduling, menu changes, and media metadata changes must each be separately confirmed.',
     'When a page is structured or test-like, use the structured data from pageDomSnapshot: controls, selects, radioGroups, checkboxGroups, tables, lists, textBlocks, forms, frames, and shadowHosts. Use this data to identify where every visible button, field, and grouped answer lives.',
     `Bridge connected: ${connectedText}. Access profile: ${profileText}.`,
     activeTabText,
@@ -682,6 +683,20 @@ function normalizeCommandAction(action) {
     wordpresspluginaction: 'wordpressPluginAction',
     wordpressthemeaction: 'wordpressThemeAction',
     wordpressopenpluginsearch: 'wordpressOpenPluginSearch',
+    wordpressmedialibrary: 'wordpressMediaLibrary',
+    wordpressupdatemedia: 'wordpressUpdateMedia',
+    wordpressrevisionlist: 'wordpressRevisionList',
+    wordpressrestorerevision: 'wordpressRestoreRevision',
+    wordpressuserroleaudit: 'wordpressUserRoleAudit',
+    wordpresssiteaudit: 'wordpressSiteAudit',
+    wordpressseoaudit: 'wordpressSeoAudit',
+    wordpressmenuinspect: 'wordpressMenuInspect',
+    wordpressmenuitemaction: 'wordpressMenuItemAction',
+    wordpressschedulecontent: 'wordpressScheduleContent',
+    wordpresswoocommerceinspect: 'wordpressWooCommerceInspect',
+    wordpressredirectaudit: 'wordpressRedirectAudit',
+    wordpressbackupcontent: 'wordpressBackupContent',
+    wordpressmaintenanceworkflow: 'wordpressMaintenanceWorkflow',
     elementorinspect: 'elementorInspect',
     inspectelementor: 'elementorInspect',
     elementorwaitready: 'elementorWaitReady',
@@ -3598,6 +3613,241 @@ async function elementorBridgeAction(operation, params = {}, tabId = null) {
         note: 'WordPress accepted the control click. Re-inspect the admin screen to verify the final state.',
       };
     }
+    const advancedWordPressOperations = new Set([
+      'wordpressMediaLibrary',
+      'wordpressUpdateMedia',
+      'wordpressRevisionList',
+      'wordpressRestoreRevision',
+      'wordpressUserRoleAudit',
+      'wordpressSiteAudit',
+      'wordpressSeoAudit',
+      'wordpressMenuInspect',
+      'wordpressMenuItemAction',
+      'wordpressScheduleContent',
+      'wordpressWooCommerceInspect',
+      'wordpressRedirectAudit',
+      'wordpressGetContentRecord',
+    ]);
+    if (advancedWordPressOperations.has(payload.operation)) {
+      const wordpress = inspectWordPress();
+      if (!wordpress.isAdmin || !wordpress.isLoggedIn) {
+        return { ok: false, error: 'A logged-in WordPress admin screen is required.', wordpress };
+      }
+      const extraScript = document.querySelector('#wp-api-request-js-extra')?.textContent || '';
+      let apiSettings = null;
+      const objectMatch = extraScript.match(/wpApiSettings\s*=\s*(\{[\s\S]*?\});/);
+      if (objectMatch) {
+        try { apiSettings = JSON.parse(objectMatch[1]); } catch { apiSettings = null; }
+      }
+      const nonce = apiSettings?.nonce || document.querySelector('input[name="_wpnonce"]')?.value || null;
+      const apiRoot = apiSettings?.root
+        || document.querySelector('link[rel="https://api.w.org/"]')?.href
+        || `${location.origin}/wp-json/`;
+      const wpRequest = async (path, options = {}) => {
+        const headers = { Accept: 'application/json', ...(options.headers || {}) };
+        if (nonce) headers['X-WP-Nonce'] = nonce;
+        if (options.body != null) headers['Content-Type'] = 'application/json';
+        const response = await fetch(new URL(path.replace(/^\//, ''), apiRoot), {
+          method: options.method || 'GET',
+          credentials: 'same-origin',
+          headers,
+          body: options.body != null ? JSON.stringify(options.body) : undefined,
+        });
+        let data = null;
+        try { data = await response.json(); } catch { data = null; }
+        if (!response.ok) throw new Error(data?.message || `WordPress returned HTTP ${response.status}.`);
+        return { data, total: Number(response.headers.get('X-WP-Total') || 0), totalPages: Number(response.headers.get('X-WP-TotalPages') || 0) };
+      };
+      const contentType = lower(payload.type || 'page');
+      const restBase = contentType === 'post' ? 'posts' : contentType === 'product' ? 'products' : 'pages';
+
+      if (payload.operation === 'wordpressMediaLibrary') {
+        const query = new URLSearchParams({
+          per_page: String(Math.max(1, Math.min(100, Number(payload.limit || 50)))),
+          page: String(Math.max(1, Number(payload.page || 1))),
+          context: 'edit',
+        });
+        if (payload.search) query.set('search', String(payload.search));
+        if (payload.mimeType) query.set('media_type', String(payload.mimeType).split('/')[0]);
+        const result = await wpRequest(`wp/v2/media?${query}`);
+        return {
+          ok: true,
+          total: result.total,
+          totalPages: result.totalPages,
+          items: result.data.map((item) => ({
+            id: item.id,
+            date: item.date,
+            slug: item.slug,
+            type: item.media_type,
+            mimeType: item.mime_type,
+            title: item.title?.raw || item.title?.rendered || '',
+            altText: item.alt_text || '',
+            caption: item.caption?.raw || item.caption?.rendered || '',
+            sourceUrl: item.source_url,
+            width: item.media_details?.width || null,
+            height: item.media_details?.height || null,
+          })),
+        };
+      }
+      if (payload.operation === 'wordpressUpdateMedia') {
+        if (payload.confirmAction !== true) return { ok: false, confirmationRequired: true, error: 'Media metadata changes require confirmAction=true.' };
+        if (!nonce) return { ok: false, error: 'WordPress REST nonce was not found.' };
+        const id = Number(payload.mediaId);
+        if (!id) return { ok: false, error: 'A valid mediaId is required.' };
+        const body = {};
+        if (payload.altText != null) body.alt_text = String(payload.altText);
+        if (payload.title != null) body.title = String(payload.title);
+        if (payload.caption != null) body.caption = String(payload.caption);
+        if (payload.description != null) body.description = String(payload.description);
+        if (!Object.keys(body).length) return { ok: false, error: 'Provide at least one media metadata field.' };
+        const result = await wpRequest(`wp/v2/media/${id}`, { method: 'POST', body });
+        return { ok: true, updated: true, id, title: result.data.title?.rendered || '', altText: result.data.alt_text || '', confirmationUsed: true };
+      }
+      if (payload.operation === 'wordpressRevisionList') {
+        const contentId = Number(payload.contentId || postId);
+        if (!contentId) return { ok: false, error: 'A valid contentId is required.' };
+        const result = await wpRequest(`wp/v2/${restBase}/${contentId}/revisions?context=edit&per_page=${Math.max(1, Math.min(100, Number(payload.limit || 50)))}`);
+        return {
+          ok: true,
+          contentId,
+          type: contentType,
+          revisions: result.data.map((revision) => ({
+            id: revision.id,
+            date: revision.date,
+            modified: revision.modified,
+            author: revision.author,
+            title: revision.title?.raw || revision.title?.rendered || '',
+            excerpt: norm(revision.excerpt?.raw || revision.excerpt?.rendered || '').slice(0, 500),
+          })),
+        };
+      }
+      if (payload.operation === 'wordpressRestoreRevision') {
+        if (payload.confirmRestore !== true) return { ok: false, confirmationRequired: true, error: 'Revision restore requires confirmRestore=true.' };
+        if (!nonce) return { ok: false, error: 'WordPress REST nonce was not found.' };
+        const contentId = Number(payload.contentId || postId);
+        const revisionId = Number(payload.revisionId);
+        if (!contentId || !revisionId) return { ok: false, error: 'contentId and revisionId are required.' };
+        const result = await wpRequest(`wp/v2/${restBase}/${contentId}/revisions/${revisionId}/restore`, { method: 'POST', body: {} });
+        return { ok: true, restored: true, contentId, revisionId, result: result.data, confirmationUsed: true };
+      }
+      if (payload.operation === 'wordpressUserRoleAudit') {
+        const result = await wpRequest(`wp/v2/users?context=edit&per_page=${Math.max(1, Math.min(100, Number(payload.limit || 100)))}`);
+        const users = result.data.map((user) => ({
+          id: user.id,
+          name: user.name,
+          slug: user.slug,
+          roles: user.roles || [],
+          capabilities: payload.includeCapabilities === true ? Object.keys(user.capabilities || {}).filter((key) => user.capabilities[key]) : undefined,
+        }));
+        return {
+          ok: true,
+          total: result.total,
+          roleCounts: users.flatMap((user) => user.roles).reduce((counts, role) => ({ ...counts, [role]: (counts[role] || 0) + 1 }), {}),
+          administrators: users.filter((user) => user.roles.includes('administrator')).length,
+          users,
+          note: 'No passwords, authentication tokens, cookies, or email addresses are returned.',
+        };
+      }
+      if (payload.operation === 'wordpressGetContentRecord') {
+        const contentId = Number(payload.contentId || postId);
+        if (!contentId) return { ok: false, error: 'A valid contentId is required.' };
+        const result = await wpRequest(`wp/v2/${restBase}/${contentId}?context=edit`);
+        return { ok: true, type: contentType, contentId, record: result.data };
+      }
+      if (payload.operation === 'wordpressScheduleContent') {
+        if (payload.confirmSchedule !== true) return { ok: false, confirmationRequired: true, error: 'Scheduling requires confirmSchedule=true.' };
+        if (!nonce) return { ok: false, error: 'WordPress REST nonce was not found.' };
+        const date = new Date(payload.date);
+        if (Number.isNaN(date.getTime()) || date.getTime() <= Date.now()) return { ok: false, error: 'A valid future date is required.' };
+        const contentId = Number(payload.contentId || postId);
+        if (!contentId) return { ok: false, error: 'A valid existing contentId is required.' };
+        const result = await wpRequest(`wp/v2/${restBase}/${contentId}`, {
+          method: 'POST',
+          body: { status: 'future', date: date.toISOString() },
+        });
+        return { ok: true, scheduled: true, contentId, status: result.data.status, date: result.data.date, confirmationUsed: true };
+      }
+      if (payload.operation === 'wordpressMenuInspect') {
+        try {
+          const menus = await wpRequest('wp/v2/menus?context=edit&per_page=100');
+          const items = await wpRequest('wp/v2/menu-items?context=edit&per_page=100');
+          return {
+            ok: true,
+            menus: menus.data.map((menu) => ({ id: menu.id, name: menu.name, slug: menu.slug, locations: menu.locations || [] })),
+            items: items.data.map((item) => ({ id: item.id, title: item.title?.raw || item.title?.rendered || '', url: item.url, menus: item.menus, parent: item.parent, order: item.menu_order, status: item.status })),
+          };
+        } catch (error) {
+          return { ok: false, error: error.message, fallback: 'Open Appearance > Menus and use wordpressAdminInspect; this site may not expose menu REST endpoints.' };
+        }
+      }
+      if (payload.operation === 'wordpressMenuItemAction') {
+        if (payload.confirmAction !== true) return { ok: false, confirmationRequired: true, error: 'Menu changes require confirmAction=true.' };
+        if (!nonce) return { ok: false, error: 'WordPress REST nonce was not found.' };
+        const menuId = Number(payload.menuId);
+        if (!menuId || !payload.title || !payload.url) return { ok: false, error: 'menuId, title, and url are required.' };
+        const result = await wpRequest('wp/v2/menu-items', {
+          method: 'POST',
+          body: { title: String(payload.title), url: String(payload.url), menus: menuId, type: 'custom', status: 'publish', parent: Number(payload.parent || 0), menu_order: Number(payload.order || 0) },
+        });
+        return { ok: true, created: true, itemId: result.data.id, menuId, confirmationUsed: true };
+      }
+      if (payload.operation === 'wordpressWooCommerceInspect') {
+        const menuPresent = !!Array.from(document.querySelectorAll('#adminmenu a')).find((link) => /woocommerce|products|товар/i.test(link.textContent));
+        const productRows = Array.from(document.querySelectorAll('.wp-list-table .type-product')).map((row) => ({
+          id: Number(String(row.id || '').replace(/\D/g, '')) || null,
+          title: norm(row.querySelector('.row-title')?.textContent || ''),
+          sku: norm(row.querySelector('.column-sku')?.textContent || ''),
+          stock: norm(row.querySelector('.column-is_in_stock, .column-stock')?.textContent || ''),
+          price: norm(row.querySelector('.column-price')?.textContent || ''),
+        }));
+        return { ok: true, detected: menuPresent || productRows.length > 0, visibleProducts: productRows, note: 'Read-only WooCommerce inspection; orders and payments are not modified.' };
+      }
+      if (payload.operation === 'wordpressRedirectAudit') {
+        const links = Array.from(document.querySelectorAll('a[href]')).map((link) => ({ text: norm(link.textContent).slice(0, 160), href: link.href, rawHref: link.getAttribute('href') }));
+        const issues = links.filter((link) => !link.rawHref || link.rawHref === '#' || /^javascript:/i.test(link.rawHref)).map((link) => ({ ...link, issue: !link.rawHref ? 'missing-href' : link.rawHref === '#' ? 'placeholder' : 'javascript-url' }));
+        return { ok: true, linkCount: links.length, issueCount: issues.length, issues, note: 'This audits links visible on the current admin/editor screen; it does not create redirects automatically.' };
+      }
+      if (payload.operation === 'wordpressSeoAudit' || payload.operation === 'wordpressSiteAudit') {
+        const targetDocument = previewDocument || document;
+        const headings = Array.from(targetDocument.querySelectorAll('h1,h2,h3,h4,h5,h6')).map((heading) => ({ level: Number(heading.tagName.slice(1)), text: norm(heading.textContent).slice(0, 180) }));
+        const images = Array.from(targetDocument.images || []).map((image) => ({ src: image.currentSrc || image.src, alt: image.getAttribute('alt'), width: image.naturalWidth, height: image.naturalHeight }));
+        const seo = {
+          title: targetDocument.title,
+          description: targetDocument.querySelector('meta[name="description"]')?.content || null,
+          canonical: targetDocument.querySelector('link[rel="canonical"]')?.href || null,
+          robots: targetDocument.querySelector('meta[name="robots"]')?.content || null,
+          openGraph: Array.from(targetDocument.querySelectorAll('meta[property^="og:"]')).map((meta) => ({ property: meta.getAttribute('property'), content: meta.content })),
+          headingCount: headings.length,
+          h1Count: headings.filter((heading) => heading.level === 1).length,
+          headings,
+          imagesMissingAlt: images.filter((image) => image.alt == null || image.alt === ''),
+          schemaBlocks: targetDocument.querySelectorAll('script[type="application/ld+json"]').length,
+        };
+        if (payload.operation === 'wordpressSeoAudit') return { ok: true, seo };
+        let headers = {};
+        try {
+          const response = await fetch(location.origin, { method: 'HEAD', credentials: 'same-origin' });
+          for (const name of ['content-security-policy', 'strict-transport-security', 'x-content-type-options', 'x-frame-options', 'referrer-policy']) {
+            headers[name] = response.headers.get(name);
+          }
+        } catch {
+          headers = {};
+        }
+        return {
+          ok: true,
+          wordpress,
+          seo,
+          security: {
+            https: location.protocol === 'https:',
+            generator: targetDocument.querySelector('meta[name="generator"]')?.content || null,
+            xmlRpcLinkExposed: !!targetDocument.querySelector('link[rel="pingback"]'),
+            restApiLinkExposed: !!targetDocument.querySelector('link[rel="https://api.w.org/"]'),
+            headers,
+          },
+          siteHealth: Array.from(document.querySelectorAll('.health-check-accordion, .site-health-issue, .notice')).map((el) => norm(el.textContent).slice(0, 500)).filter(Boolean).slice(0, 100),
+        };
+      }
+    }
     if (['wordpressAdminInspect', 'wordpressContentList', 'wordpressPluginThemeAudit'].includes(payload.operation)) {
       const wordpress = inspectWordPress();
       if (!wordpress.isAdmin) return { ok: false, error: 'The current page is not a WordPress admin screen.', wordpress };
@@ -4815,6 +5065,70 @@ async function wordpressOpenPluginSearch(params = {}, tabId = null) {
   }, resolvedTabId);
 }
 
+async function wordpressBackupContent(params = {}, tabId = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const record = await elementorBridgeAction('wordpressGetContentRecord', {
+    type: params.type || 'page',
+    contentId: params.contentId,
+  }, resolvedTabId);
+  if (record?.ok === false) return record;
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const safeType = String(record.type || 'content').replace(/[^a-z0-9_-]/gi, '-');
+  const filename = String(params.filename || `wordpress-${safeType}-${record.contentId}-${timestamp}.json`).replace(/[<>:"/\\|?*]/g, '-');
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    source: 'chrome-bridge-wordpress-backup',
+    type: record.type,
+    contentId: record.contentId,
+    record: record.record,
+  };
+  const url = `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(payload, null, 2))}`;
+  const downloadId = await chrome.downloads.download({ url, filename, saveAs: params.saveAs === true, conflictAction: 'uniquify' });
+  return { ok: true, backedUp: true, type: record.type, contentId: record.contentId, filename, downloadId };
+}
+
+async function wordpressMaintenanceWorkflow(params = {}, tabId = null) {
+  const resolvedTabId = await resolveTargetTabId(tabId);
+  const steps = [];
+  let backup = null;
+  if (params.contentId) {
+    backup = await wordpressBackupContent({
+      type: params.type || 'page',
+      contentId: params.contentId,
+      saveAs: false,
+    }, resolvedTabId);
+    steps.push({ action: 'backup', result: backup });
+    if (backup?.ok === false) return { ok: false, steps, error: backup.error };
+  }
+  let change = null;
+  if (params.pluginAction) {
+    change = await elementorBridgeAction('wordpressPluginAction', {
+      pluginAction: params.pluginAction,
+      pluginSlug: params.pluginSlug,
+      name: params.name,
+      confirmAction: params.confirmAction === true,
+      confirmDelete: params.confirmDelete === true,
+      waitMs: params.waitMs,
+    }, resolvedTabId);
+    steps.push({ action: 'plugin-change', result: change });
+    if (change?.ok === false) return { ok: false, backup, steps, error: change.error };
+    if (change.navigationScheduled) {
+      try { await waitForPageReady(resolvedTabId, params.timeoutMs || 20000); } catch {}
+    }
+  }
+  const verification = await elementorBridgeAction('wordpressAdminInspect', { limit: 100 }, resolvedTabId);
+  steps.push({ action: 'verify-admin', result: verification });
+  return {
+    ok: verification?.ok !== false,
+    backup,
+    change,
+    verification,
+    steps,
+    rollbackAvailable: !!backup,
+    note: 'The workflow backs up content and verifies WordPress after one confirmed change. Automatic plugin-version rollback is not attempted.',
+  };
+}
+
 async function handleCommand(command) {
   const params = command.params || {};
   const normalizedAction = normalizeCommandAction(command.action);
@@ -4893,6 +5207,18 @@ async function handleCommand(command) {
     case 'wordpressCreateDraft':
     case 'wordpressPluginAction':
     case 'wordpressThemeAction':
+    case 'wordpressMediaLibrary':
+    case 'wordpressUpdateMedia':
+    case 'wordpressRevisionList':
+    case 'wordpressRestoreRevision':
+    case 'wordpressUserRoleAudit':
+    case 'wordpressSiteAudit':
+    case 'wordpressSeoAudit':
+    case 'wordpressMenuInspect':
+    case 'wordpressMenuItemAction':
+    case 'wordpressScheduleContent':
+    case 'wordpressWooCommerceInspect':
+    case 'wordpressRedirectAudit':
     case 'elementorWaitReady':
     case 'elementorInspect':
     case 'elementorNavigator':
@@ -4918,6 +5244,10 @@ async function handleCommand(command) {
       return await wordpressOpenAdminSection(params, params.tabId ?? null);
     case 'wordpressOpenPluginSearch':
       return await wordpressOpenPluginSearch(params, params.tabId ?? null);
+    case 'wordpressBackupContent':
+      return await wordpressBackupContent(params, params.tabId ?? null);
+    case 'wordpressMaintenanceWorkflow':
+      return await wordpressMaintenanceWorkflow(params, params.tabId ?? null);
     case 'elementorRunWorkflow':
       return await elementorRunWorkflow(params, params.tabId ?? null);
     case 'elementorResponsiveAudit':
